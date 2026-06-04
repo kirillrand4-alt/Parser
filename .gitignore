@@ -1,0 +1,27 @@
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# Data (large files)
+data/*.csv
+data/*.db
+
+# Cache (HTTP cache SQLite files, but keep directory)
+cache/*.sqlite
+cache/*.checkpoint.json
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Editor
+.idea/
+.vscode/
+*.swp

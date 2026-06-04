@@ -1,0 +1,72 @@
+name: Competitor Price Scrape
+
+on:
+  schedule:
+    # Run Mon–Fri at 03:00 UTC (06:00 Moscow, off-peak)
+    - cron: "0 3 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      site:
+        description: "Site to scrape (default: all)"
+        required: false
+        default: "all"
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore cache
+        uses: actions/cache@v4
+        with:
+          path: cache/
+          key: scrape-cache-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            scrape-cache-${{ runner.os }}-
+
+      - name: Restore database
+        uses: actions/cache@v4
+        with:
+          path: data/prices.db
+          key: prices-db-${{ runner.os }}-latest
+          restore-keys: |
+            prices-db-${{ runner.os }}-
+
+      - name: Run scraper
+        run: |
+          mkdir -p data
+          SITE="${{ github.event.inputs.site || 'all' }}"
+          python -m monitor scrape --site "$SITE" --verbose
+
+      - name: Upload CSV artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: prices-${{ github.run_id }}
+          path: data/prices_*.csv
+          retention-days: 90
+
+      - name: Save cache
+        if: always()
+        uses: actions/cache@v4
+        with:
+          path: cache/
+          key: scrape-cache-${{ runner.os }}-${{ github.run_id }}
+
+      - name: Save database
+        if: always()
+        uses: actions/cache@v4
+        with:
+          path: data/prices.db
+          key: prices-db-${{ runner.os }}-latest

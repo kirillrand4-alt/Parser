@@ -1,0 +1,13 @@
+requests>=2.31
+requests-cache>=1.2
+beautifulsoup4>=4.12
+lxml>=5.0
+selectolax>=0.3.17
+fake-useragent>=1.5
+tenacity>=8.2
+rich>=13.0
+click>=8.1
+python-dotenv>=1.0
+charset-normalizer>=3.3
+# Optional: uncomment if any site requires JS execution
+# playwright>=1.40
