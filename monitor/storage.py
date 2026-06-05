@@ -4,14 +4,55 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import os
+import shutil
 import sqlite3
 import threading
+import time
 from pathlib import Path
 from typing import Iterable
 
 from .models import Product
 
 logger = logging.getLogger(__name__)
+
+# Set BACKUP_DIR to a Drive-mounted folder to get periodic snapshots of the
+# DB and CSV while the scrape is running. Each snapshot is a closed copy,
+# so Google Drive FUSE picks it up immediately (unlike the open working files).
+# Example: env BACKUP_DIR=/content/drive/MyDrive/parser_data
+_BACKUP_DIR = os.getenv("BACKUP_DIR")
+_BACKUP_INTERVAL = int(os.getenv("BACKUP_INTERVAL", "300"))  # seconds, default 5 min
+
+
+class _BackupThread(threading.Thread):
+    """Periodically copy DB + CSV to BACKUP_DIR as closed snapshots."""
+
+    def __init__(self, db_path: Path, csv_path: Path, dest: Path, interval: int) -> None:
+        super().__init__(daemon=True, name="backup")
+        self.db_path = db_path
+        self.csv_path = csv_path
+        self.dest = dest
+        self.interval = interval
+        self._stop = threading.Event()
+
+    def run(self) -> None:
+        self.dest.mkdir(parents=True, exist_ok=True)
+        while not self._stop.wait(self.interval):
+            self._copy()
+
+    def _copy(self) -> None:
+        for src in (self.db_path, self.csv_path):
+            if not src.exists():
+                continue
+            try:
+                shutil.copy2(src, self.dest / src.name)
+                logger.debug("[backup] synced %s → %s", src.name, self.dest)
+            except Exception as exc:
+                logger.warning("[backup] failed to copy %s: %s", src.name, exc)
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._copy()  # final sync on shutdown
 
 CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS products (
@@ -65,6 +106,14 @@ class Storage:
         self._counts: dict[str, int] = {}
         self._lock = threading.Lock()
 
+        self._backup: _BackupThread | None = None
+        if _BACKUP_DIR:
+            self._backup = _BackupThread(
+                db_path, csv_path, Path(_BACKUP_DIR), _BACKUP_INTERVAL
+            )
+            self._backup.start()
+            logger.info("[backup] started — syncing to %s every %ds", _BACKUP_DIR, _BACKUP_INTERVAL)
+
     def write(self, product: Product) -> None:
         row = product.to_dict()
         cols = Product.csv_headers()
@@ -90,6 +139,8 @@ class Storage:
     def close(self) -> None:
         self._conn.close()
         self._csv_file.close()
+        if self._backup:
+            self._backup.stop()
 
     def __enter__(self) -> "Storage":
         return self
