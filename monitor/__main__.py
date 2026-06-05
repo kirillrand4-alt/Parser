@@ -174,6 +174,25 @@ def recon_cmd(verbose: bool) -> None:
     run_recon()
 
 
+@cli.command("urls")
+@click.option("--site", required=True, help="Site name, e.g. pnevmoteh.ru")
+@click.option("--n", default=5, show_default=True, help="How many sample URLs.")
+def urls_cmd(site: str, n: int) -> None:
+    """Print sample product URLs from a site's sitemap (recon helper)."""
+    setup_logging(False)
+    from .inspect import sample_urls
+    for u in sample_urls(site, n):
+        print(u)
+
+
+@cli.command("inspect")
+@click.argument("url")
+def inspect_cmd(url: str) -> None:
+    """Dump price/specs/availability candidates for a product URL (recon helper)."""
+    from .inspect import inspect_url
+    inspect_url(url)
+
+
 @cli.command("list-runs")
 @click.option("--db", default=str(DB_PATH), show_default=True)
 def list_runs_cmd(db: str) -> None:
