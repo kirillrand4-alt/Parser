@@ -60,14 +60,18 @@ class AerocompressorsScraper(BaseScraper):
         soup = BeautifulSoup(resp.content, "lxml")
 
         price = self._price(soup)
-        if price is None:
+        specs = self._extract_specs(soup)
+
+        # Distinguish a product (has a price block or a specs table) from a
+        # category listing. A product with "цена по запросу" has no number but
+        # still has the price element/specs — keep it as "под заказ".
+        has_price_block = soup.select_one("[itemprop='price'], .price") is not None
+        if price is None and not specs and not has_price_block:
             return None  # category page
 
         page_text = soup.get_text(" ", strip=True)
         h1 = soup.select_one("h1")
         name = h1.get_text(" ", strip=True) if h1 else ""
-
-        specs = self._extract_specs(soup)
 
         brand = ""
         for k in _BRAND_KEYS:
@@ -86,9 +90,12 @@ class AerocompressorsScraper(BaseScraper):
         if price and old_price and old_price > price:
             discount_pct = round((old_price - price) / old_price * 100, 1)
 
-        # No explicit stock block; price implies orderable/in-stock.
-        availability = "в наличии"
-        series_status = "в наличии"
+        # No explicit stock block: a numeric price implies in-stock; a product
+        # shown "по запросу" (no number) is treated as orderable ("под заказ").
+        if price is not None:
+            availability, series_status = "в наличии", "в наличии"
+        else:
+            availability, series_status = "цена по запросу", "под заказ"
         if has_discontinued_signal(page_text):
             series_status = "снято"
             availability = "снято с производства"
