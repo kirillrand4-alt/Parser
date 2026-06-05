@@ -13,6 +13,7 @@ Markup:
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 from typing import Optional
@@ -50,9 +51,26 @@ class VpkScraper(BaseScraper):
         return ["__category__"]
 
     def fetch_listing(self, url: str) -> list[str]:
-        seen: set[str] = set()
+        # The catalog walk is ~331 single-threaded pages (5-7 min). If a session
+        # dies mid-walk it used to restart from page 1 every time. We persist the
+        # accumulated URLs and last completed page into the checkpoint every few
+        # pages, and resume from there. Partial state lives under dedicated keys
+        # (vpk_partial_*) so the base scraper's product_urls cache (written only
+        # on a *complete* walk) is never fed a half-built list.
+        resume = os.getenv("RESUME", "").strip().lower() in ("1", "true", "yes")
         urls: list[str] = []
-        for page in range(1, MAX_PAGES + 1):
+        start_page = 1
+        if resume:
+            saved = self._checkpoint.get("vpk_partial_urls") or []
+            last = int(self._checkpoint.get("vpk_partial_last_page") or 0)
+            if saved and last:
+                urls = list(saved)
+                start_page = last + 1
+                logger.info("[v-p-k] resume pagination: %d URLs, continuing from page %d",
+                            len(urls), start_page)
+        seen: set[str] = set(urls)
+
+        for page in range(start_page, MAX_PAGES + 1):
             page_url = CATEGORY if page == 1 else f"{CATEGORY}?PAGEN_1={page}"
             try:
                 resp = self.client.get(page_url, timeout=40)
@@ -76,6 +94,11 @@ class VpkScraper(BaseScraper):
                 break
             if page % 25 == 0:
                 logger.info("[v-p-k] catalog page %d, %d URLs so far", page, len(urls))
+                self._persist_pages(page, urls)
+        # Walk finished — drop the partial-progress keys so a later run doesn't
+        # try to resume a completed pagination.
+        self._checkpoint.pop("vpk_partial_urls", None)
+        self._checkpoint.pop("vpk_partial_last_page", None)
         if os.getenv("SHUFFLE", "").strip() in ("1", "true", "yes"):
             import random
             random.shuffle(urls)
@@ -83,6 +106,15 @@ class VpkScraper(BaseScraper):
             urls = urls[:MAX_URLS]
         logger.info("[v-p-k] %d product URLs from catalog pagination", len(urls))
         return urls
+
+    def _persist_pages(self, page: int, urls: list[str]) -> None:
+        """Atomically save mid-walk pagination progress to the checkpoint."""
+        self._checkpoint["vpk_partial_urls"] = urls
+        self._checkpoint["vpk_partial_last_page"] = page
+        self._checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self._checkpoint_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(self._checkpoint, ensure_ascii=False))
+        tmp.replace(self._checkpoint_path)
 
     def parse_product(self, url: str) -> Optional[Product]:
         resp = self.client.get(url)
