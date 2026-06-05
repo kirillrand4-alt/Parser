@@ -118,6 +118,71 @@ def extract_brand_from_name(name: str) -> str:
     return ""
 
 
+def parse_spec_table(rows) -> tuple[dict, bool]:
+    """Parse a list of <tr> elements into a specs dict.
+
+    Returns ``(specs, is_matrix)``. ``is_matrix`` is True when the table is a
+    multi-variant comparison matrix (a "series" page, e.g. one page covering a
+    whole CompAir L26 family with a column per sub-model). Our sites use strictly
+    2-column "label | value" tables, so a row with >= 3 cells signals a matrix;
+    when >= 2 such rows are found, the caller should skip the product.
+
+    For a normal 2-column table the first cell is the key and the last the value.
+    """
+    specs: dict = {}
+    wide_rows = 0
+    for row in rows:
+        cells = row.select("td, th")
+        if len(cells) >= 3:
+            wide_rows += 1
+            continue
+        if len(cells) >= 2:
+            k = cells[0].get_text(" ", strip=True).rstrip(":").strip()
+            v = cells[-1].get_text(" ", strip=True)
+            if k and v:
+                specs[k] = v
+    is_matrix = wide_rows >= 2
+    if is_matrix:
+        return {}, True
+    return specs, False
+
+
+# Generic type / description words to strip when reducing a product name down to
+# its bare model code (e.g. "Винтовой компрессор Atlas Copco XATS 487" → "XATS 487").
+_MODEL_NOISE_WORDS = (
+    "винтовой", "винтовая", "поршневой", "поршневая", "спиральный", "спиральная",
+    "безмасляный", "безмасляная", "маслозаполненный", "маслозаполненная",
+    "маслосмазываемый", "дизельный", "дизельная", "бензиновый", "бензиновая",
+    "электрический", "электрическая", "передвижной", "передвижная", "мобильный",
+    "мобильная", "стационарный", "стационарная", "промышленный", "промышленная",
+    "компрессорная", "компрессорный", "компрессор", "станция", "установка",
+    "воздушный", "воздушная", "масляный", "масляная", "привод", "прямой",
+    "ременной", "ременная", "с", "на", "ресивере", "электродвигателем",
+    "оборудование", "генератор",
+)
+_MODEL_NOISE_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(w) for w in _MODEL_NOISE_WORDS) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def extract_model_from_name(name: str, brand: str = "") -> str:
+    """Best-effort short model code: strip brand and generic type words.
+
+    "Винтовой компрессор Atlas Copco XATS 487 дизельный" → "XATS 487".
+    Falls back to the full name when nothing recognisable remains.
+    """
+    if not name:
+        return ""
+    s = name
+    if brand:
+        s = re.sub(re.escape(brand), " ", s, flags=re.IGNORECASE)
+    s = _MODEL_NOISE_RE.sub(" ", s)
+    # Collapse leftover punctuation/space noise
+    s = re.sub(r"\s+", " ", s).strip(" -–—,.")
+    return s or name
+
+
 @dataclass
 class Product:
     site: str

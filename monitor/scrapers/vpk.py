@@ -22,7 +22,7 @@ from bs4 import BeautifulSoup
 from ..base_scraper import BaseScraper
 from ..models import (
     Product, clean_price, has_discontinued_signal, status_from_availability,
-    extract_brand_from_name,
+    extract_brand_from_name, extract_model_from_name,
 )
 from ..sitemap import collect_product_urls
 
@@ -101,7 +101,8 @@ class VpkScraper(BaseScraper):
         image_url = self._image(soup)
 
         return Product(
-            site=self.site, brand=brand, name=name, model=name,
+            site=self.site, brand=brand, name=name,
+            model=extract_model_from_name(name, brand),
             price=price, old_price=old_price, discount_pct=discount_pct,
             availability=availability, series_status=series_status,
             specs=specs, category_path=category_path,

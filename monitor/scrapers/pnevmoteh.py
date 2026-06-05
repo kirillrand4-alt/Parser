@@ -23,6 +23,7 @@ from bs4 import BeautifulSoup
 from ..base_scraper import BaseScraper
 from ..models import (
     Product, clean_price, has_discontinued_signal, status_from_availability,
+    extract_model_from_name,
 )
 from ..sitemap import collect_product_urls
 
@@ -77,7 +78,7 @@ class PnevmotehScraper(BaseScraper):
             name = head.strip()
 
         specs = self._extract_specs(soup)
-        model = name
+        model = extract_model_from_name(name, brand)
 
         # Availability
         if soup.select_one(".in-stock, .commerce-add-to-cart, form[class*='add-to-cart']"):

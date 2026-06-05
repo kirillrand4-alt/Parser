@@ -21,6 +21,7 @@ from bs4 import BeautifulSoup
 from ..base_scraper import BaseScraper
 from ..models import (
     Product, clean_price, has_discontinued_signal, extract_brand_from_name,
+    extract_model_from_name, parse_spec_table,
 )
 from ..sitemap import collect_product_urls
 
@@ -86,7 +87,9 @@ class AerocompressorsScraper(BaseScraper):
         resp = self.client.get(url)
         soup = BeautifulSoup(resp.content, "lxml")
 
-        specs = self._extract_specs(soup)
+        specs, is_matrix = self._extract_specs(soup)
+        if is_matrix:
+            return None  # multi-variant series page — skip
         # Category pages carry an itemprop=price ("from" price) but no specs
         # table; only real product pages have table.tech — require it.
         if not specs:
@@ -127,7 +130,8 @@ class AerocompressorsScraper(BaseScraper):
         image_url = self._image(soup)
 
         return Product(
-            site=self.site, brand=brand, name=name, model=name,
+            site=self.site, brand=brand, name=name,
+            model=extract_model_from_name(name, brand),
             price=price, old_price=old_price, discount_pct=discount_pct,
             availability=availability, series_status=series_status,
             specs=specs, category_path=category_path,
@@ -151,16 +155,9 @@ class AerocompressorsScraper(BaseScraper):
         el = soup.select_one(".old-price, .price-old, [class*='old_price']")
         return clean_price(el.get_text()) if el else None
 
-    def _extract_specs(self, soup: BeautifulSoup) -> dict:
-        specs: dict = {}
-        for row in soup.select("table.tech tr, table.characteristics tr, table.params tr"):
-            cells = row.select("td, th")
-            if len(cells) >= 2:
-                k = cells[0].get_text(" ", strip=True).rstrip(":").strip()
-                v = cells[-1].get_text(" ", strip=True)
-                if k and v:
-                    specs[k] = v
-        return specs
+    def _extract_specs(self, soup: BeautifulSoup) -> tuple[dict, bool]:
+        rows = soup.select("table.tech tr, table.characteristics tr, table.params tr")
+        return parse_spec_table(rows)
 
     def _category_from_url(self, url: str) -> str:
         import urllib.parse

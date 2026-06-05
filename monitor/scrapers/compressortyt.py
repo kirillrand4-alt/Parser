@@ -17,7 +17,10 @@ from typing import Optional
 from bs4 import BeautifulSoup
 
 from ..base_scraper import BaseScraper
-from ..models import Product, clean_price, detect_series_status
+from ..models import (
+    Product, clean_price, detect_series_status,
+    extract_model_from_name, parse_spec_table,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -133,11 +136,13 @@ class CompressortytScraper(BaseScraper):
 
         available = offer.get("available", "true") == "true"
         currency = t("currencyId").replace("RUR", "RUB") or "RUB"
+        name = t("name")
+        brand = t("vendor")
         return Product(
             site=self.site,
-            brand=t("vendor"),
-            name=t("name"),
-            model=t("name"),
+            brand=brand,
+            name=name,
+            model=extract_model_from_name(name, brand),
             sku=offer.get("id", ""),
             price=clean_price(t("price")),
             old_price=clean_price(t("oldprice")),
@@ -331,15 +336,12 @@ class CompressortytScraper(BaseScraper):
         return ""
 
     def _extract_specs(self, soup: BeautifulSoup) -> dict:
-        specs: dict = {}
-        # Method 1: specification table rows
-        for row in soup.select("table.specs tr, table.characteristics tr, .product-specs tr, .specification tr"):
-            cells = row.select("th, td")
-            if len(cells) >= 2:
-                key = cells[0].get_text(strip=True)
-                val = cells[-1].get_text(strip=True)
-                if key and val:
-                    specs[key] = val
+        # Method 1: specification table rows (skip multi-variant matrices)
+        rows = soup.select(
+            "table.specs tr, table.characteristics tr, .product-specs tr, .specification tr")
+        specs, is_matrix = parse_spec_table(rows)
+        if is_matrix:
+            specs = {}
 
         # Method 2: dl/dt/dd pairs
         if not specs:

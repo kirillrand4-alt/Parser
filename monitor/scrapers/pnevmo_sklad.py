@@ -17,6 +17,7 @@ from ..base_scraper import BaseScraper
 from ..models import (
     Product, clean_price, detect_series_status,
     has_discontinued_signal, status_from_availability,
+    extract_model_from_name, parse_spec_table,
 )
 from ..sitemap import collect_product_urls
 
@@ -61,17 +62,23 @@ class PnevmoSkladScraper(BaseScraper):
             name = h1.get_text(strip=True)
 
         # Characteristics table: <tr> with "Label:" | "Value"
-        specs = self._extract_specs(soup)
+        specs, is_matrix = self._extract_specs(soup)
+        if is_matrix:
+            return None  # multi-variant series page — skip
 
         # Brand and article come straight from the chars table
         brand = specs.get("Бренд", "") or specs.get("Производитель", "")
         sku = specs.get("Артикул", "")
-        model = sku or name
+        model = extract_model_from_name(name, brand)
 
         # Price: .pricebox__price holds the number, or "Цена по запросу" → None
         price = self._get_price(soup, ".pricebox__price, .prodsticky__price")
         old_price = self._get_price(
             soup, ".pricebox__oldprice, .hprod__oldprice, .price-old")
+        # Guard: .hprod__oldprice can pick up an unrelated (lower) number; a real
+        # strike-through old price is always higher than the current price.
+        if old_price and price and old_price <= price:
+            old_price = None
         discount_pct = self._calc_discount(price, old_price)
 
         availability_el = soup.select_one(".pricebox__instock, .ltprod__instock, .prodbig__instock")
@@ -134,17 +141,10 @@ class PnevmoSkladScraper(BaseScraper):
             return texts[-2]
         return ""
 
-    def _extract_specs(self, soup: BeautifulSoup) -> dict:
-        specs: dict = {}
+    def _extract_specs(self, soup: BeautifulSoup) -> tuple[dict, bool]:
         # Full characteristics table is .charstable (also .prodbig__chars-table teaser)
-        for row in soup.select("table.charstable tr, .prodbig__chars-table tr"):
-            cells = row.select("td, th")
-            if len(cells) >= 2:
-                k = cells[0].get_text(" ", strip=True).rstrip(":").strip()
-                v = cells[-1].get_text(" ", strip=True)
-                if k and v:
-                    specs[k] = v
-        return specs
+        rows = soup.select("table.charstable tr, .prodbig__chars-table tr")
+        return parse_spec_table(rows)
 
     def _get_image(self, soup: BeautifulSoup) -> str:
         for sel in ("[itemprop='image']", ".product-image img", ".detail-picture img"):

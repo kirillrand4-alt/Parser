@@ -21,7 +21,7 @@ from bs4 import BeautifulSoup
 from ..base_scraper import BaseScraper
 from ..models import (
     Product, clean_price, has_discontinued_signal, status_from_availability,
-    extract_brand_from_name,
+    extract_brand_from_name, extract_model_from_name, parse_spec_table,
 )
 from ..sitemap import collect_product_urls
 
@@ -71,7 +71,9 @@ class RutectorScraper(BaseScraper):
         h1 = soup.select_one("h1")
         name = h1.get_text(" ", strip=True) if h1 else ""
 
-        specs = self._extract_specs(soup)
+        specs, is_matrix = self._extract_specs(soup)
+        if is_matrix:
+            return None  # multi-variant series page — skip
 
         brand = ""
         for k in _BRAND_KEYS:
@@ -87,7 +89,7 @@ class RutectorScraper(BaseScraper):
             brand = extract_brand_from_name(name)
 
         sku = specs.get("Артикул", "") or specs.get("Код товара", "")
-        model = sku or name
+        model = extract_model_from_name(name, brand)
 
         price = self._price(soup)
         old_price = self._old_price(soup)
@@ -133,16 +135,9 @@ class RutectorScraper(BaseScraper):
         el = soup.select_one(".old-price, .price-old, [class*='old_price'], [class*='old-price']")
         return clean_price(el.get_text()) if el else None
 
-    def _extract_specs(self, soup: BeautifulSoup) -> dict:
-        specs: dict = {}
-        for row in soup.select("table.zebra tr, table.props tr, .characteristics tr"):
-            cells = row.select("td, th")
-            if len(cells) >= 2:
-                k = cells[0].get_text(" ", strip=True).rstrip(":").strip()
-                v = cells[-1].get_text(" ", strip=True)
-                if k and v:
-                    specs[k] = v
-        return specs
+    def _extract_specs(self, soup: BeautifulSoup) -> tuple[dict, bool]:
+        rows = soup.select("table.zebra tr, table.props tr, .characteristics tr")
+        return parse_spec_table(rows)
 
     def _breadcrumb(self, soup: BeautifulSoup) -> str:
         items = soup.select(".breadcrumb a, .breadcrumbs a, [itemprop='itemListElement'] [itemprop='name']")
