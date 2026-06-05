@@ -55,6 +55,21 @@ def sample_urls(site: str, n: int = 5) -> list[str]:
     return urls[:n]
 
 
+def inspect_site(site: str, n: int = 8) -> None:
+    """Sample product URLs from a site's sitemap and inspect the first few."""
+    urls = sample_urls(site, n)
+    print(f">>> {len(urls)} sample URLs for {site}:")
+    for u in urls:
+        print("   ", u)
+    if not urls:
+        print("   (none — sitemap filter found nothing)")
+        return
+    print("\n" + "=" * 70)
+    print(">>> Inspecting first URL:")
+    print("=" * 70)
+    inspect_url(urls[0])
+
+
 def inspect_url(url: str) -> None:
     r = requests.get(url, headers=_HEADERS, timeout=30)
     print(f"URL: {url}")

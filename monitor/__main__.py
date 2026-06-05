@@ -193,6 +193,16 @@ def inspect_cmd(url: str) -> None:
     inspect_url(url)
 
 
+@cli.command("inspect-site")
+@click.option("--site", required=True, help="Site name, e.g. rutector.ru")
+@click.option("--n", default=8, show_default=True)
+def inspect_site_cmd(site: str, n: int) -> None:
+    """Sample product URLs from a site's sitemap and inspect the first one."""
+    setup_logging(False)
+    from .inspect import inspect_site
+    inspect_site(site, n)
+
+
 @cli.command("list-runs")
 @click.option("--db", default=str(DB_PATH), show_default=True)
 def list_runs_cmd(db: str) -> None:
