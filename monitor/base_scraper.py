@@ -44,8 +44,13 @@ class BaseScraper(ABC):
         ...
 
     def scrape(self) -> Iterator[Product]:
-        """Main entry point: discover → fetch listings → parse products."""
-        seen_urls: set[str] = set(self._checkpoint.get("done_urls", []))
+        """Main entry point: discover → fetch listings → parse products.
+
+        A fresh run re-scrapes every product (a price monitor wants current
+        prices each time); the HTTP cache — not the checkpoint — protects the
+        site from repeated load. The checkpoint only dedups within a single run.
+        """
+        seen_urls: set[str] = set()
 
         category_urls = self.discover()
         logger.info("[%s] %d categories to crawl", self.site, len(category_urls))
@@ -58,13 +63,12 @@ class BaseScraper(ABC):
                 continue
 
             for prod_url in product_urls:
-                if prod_url in seen_urls:
+                if prod_url in seen_urls:  # de-dup within this run only
                     continue
+                seen_urls.add(prod_url)
                 try:
                     product = self.parse_product(prod_url)
                     if product:
-                        seen_urls.add(prod_url)
-                        self._save_checkpoint(seen_urls)
                         yield product
                 except Exception as exc:
                     logger.warning("[%s] product error %s: %s", self.site, prod_url, exc)
