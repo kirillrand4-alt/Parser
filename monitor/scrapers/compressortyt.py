@@ -95,6 +95,9 @@ class CompressortytScraper(BaseScraper):
             return " > ".join(reversed(parts))
 
         offers = shop.findall(".//offer")
+        if os.getenv("SHUFFLE", "").strip() in ("1", "true", "yes"):
+            import random
+            random.shuffle(offers)
         if MAX_OFFERS:
             offers = offers[:MAX_OFFERS]
         logger.info("[compressortyt] %d offers in feed", len(offers))

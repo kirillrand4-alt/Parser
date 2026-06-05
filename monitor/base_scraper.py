@@ -114,6 +114,13 @@ class BaseScraper(ABC):
             logger.info("[%s] resume: skipping %d already-done URLs",
                         self.site, len(product_urls) - len(pending))
 
+        # SHUFFLE=1 randomises the order so test runs sample the full catalog
+        # instead of always hitting the first N URLs from the sitemap.
+        # In production (no SHUFFLE) order is preserved for reproducibility.
+        if os.getenv("SHUFFLE", "").strip() in ("1", "true", "yes"):
+            import random
+            random.shuffle(pending)
+
         # 2) Parse each product, tracking errors and blocking.
         errors = 0
         blocked = 0
