@@ -49,10 +49,15 @@ class AerocompressorsScraper(BaseScraper):
         return ["__sitemap__"]
 
     def fetch_listing(self, url: str) -> list[str]:
+        # Fetch the whole sitemap (single file), then keep only deep paths:
+        # products live at depth >= 5; shallower paths are catalog categories.
         urls = collect_product_urls(
-            self.client, SITEMAP, include=INCLUDE, exclude=EXCLUDE, max_urls=MAX_URLS
+            self.client, SITEMAP, include=INCLUDE, exclude=EXCLUDE, max_urls=None
         )
-        logger.info("[aerocompressors] %d candidate URLs from sitemap", len(urls))
+        urls = [u for u in urls if u.rstrip("/").count("/") - 2 >= 5]
+        if MAX_URLS:
+            urls = urls[:MAX_URLS]
+        logger.info("[aerocompressors] %d product URLs from sitemap", len(urls))
         return urls
 
     def parse_product(self, url: str) -> Optional[Product]:
