@@ -11,6 +11,16 @@ from typing import Any
 
 _PRICE_GARBAGE = re.compile(r"[^\d]")
 _NORM_KEY = re.compile(r"[^A-Z0-9]")
+_WHITESPACE = re.compile(r"\s+")
+
+
+def collapse_ws(text: str) -> str:
+    """Collapse every run of whitespace (incl. tabs/newlines) to one space.
+
+    Table cells can carry embedded tabs/newlines that survive get_text() and,
+    once serialized into the specs JSON, break the CSV row layout.
+    """
+    return _WHITESPACE.sub(" ", text).strip()
 
 
 def clean_price(raw: str | None) -> float | None:
@@ -137,8 +147,8 @@ def parse_spec_table(rows) -> tuple[dict, bool]:
             wide_rows += 1
             continue
         if len(cells) >= 2:
-            k = cells[0].get_text(" ", strip=True).rstrip(":").strip()
-            v = cells[-1].get_text(" ", strip=True)
+            k = collapse_ws(cells[0].get_text(" ", strip=True)).rstrip(":").strip()
+            v = collapse_ws(cells[-1].get_text(" ", strip=True))
             if k and v:
                 specs[k] = v
     is_matrix = wide_rows >= 2
@@ -211,7 +221,17 @@ class Product:
 
     def to_dict(self) -> dict:
         d = asdict(self)
-        d["specs"] = json.dumps(d["specs"], ensure_ascii=False)
+        # Sanitize specs (collapse embedded tabs/newlines) before serializing.
+        specs = {
+            collapse_ws(str(k)): collapse_ws(str(v))
+            for k, v in d["specs"].items()
+        }
+        d["specs"] = json.dumps(specs, ensure_ascii=False)
+        # Defensive: no free-text field may carry a newline/tab that would
+        # break the CSV row (URLs/timestamps have none, but names/paths can).
+        for key, val in d.items():
+            if key != "specs" and isinstance(val, str):
+                d[key] = collapse_ws(val)
         return d
 
     @classmethod
