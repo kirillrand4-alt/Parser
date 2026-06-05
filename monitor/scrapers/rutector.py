@@ -21,6 +21,7 @@ from bs4 import BeautifulSoup
 from ..base_scraper import BaseScraper
 from ..models import (
     Product, clean_price, has_discontinued_signal, status_from_availability,
+    extract_brand_from_name,
 )
 from ..sitemap import collect_product_urls
 
@@ -69,6 +70,8 @@ class RutectorScraper(BaseScraper):
             a = soup.select_one("a[href*='/brands/']")
             if a and a.get_text(strip=True):
                 brand = a.get_text(strip=True)
+        if not brand:
+            brand = extract_brand_from_name(name)
 
         sku = specs.get("Артикул", "") or specs.get("Код товара", "")
         model = sku or name

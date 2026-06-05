@@ -87,6 +87,31 @@ def status_from_availability(availability: str) -> str:
     return "неизвестно"
 
 
+# Known compressor / pneumatic-equipment brands, longest-first so multi-word
+# brands ("Chicago Pneumatic") match before single-word substrings.
+KNOWN_BRANDS = [
+    "Atlas Copco", "Chicago Pneumatic", "Ingersoll Rand", "Ingersoll-Rand",
+    "Gardner Denver", "ET-Compressors", "ET Compressors", "KraftMachine",
+    "Kraftmann", "Pneumatech", "Comprag", "Ceccato", "Dalgakiran",
+    "Denair", "Remeza", "ABAC", "Fiac", "Aircast", "Comaro",
+    "Frosp", "Fubag", "Metabo", "Wester", "Aurora",
+    "Denzel", "Resanta", "Hyundai", "Patriot", "Zitrek", "Voltel",
+    "Mattei", "Boge", "Kaeser", "Almig", "Quincy",
+    "Sullair", "Rotorcomp", "Fini", "Mainpack", "For-Est", "Megapromtech",
+    "Scheppach", "Кратон", "Зубр", "Вектор", "Беламос", "Калибр",
+]
+_BRANDS_SORTED = sorted(KNOWN_BRANDS, key=len, reverse=True)
+
+
+def extract_brand_from_name(name: str) -> str:
+    """Find a known brand as a substring of a product name (case-insensitive)."""
+    low = name.lower()
+    for brand in _BRANDS_SORTED:
+        if brand.lower() in low:
+            return brand
+    return ""
+
+
 @dataclass
 class Product:
     site: str
