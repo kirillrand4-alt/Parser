@@ -90,16 +90,21 @@ def status_from_availability(availability: str) -> str:
 # Known compressor / pneumatic-equipment brands, longest-first so multi-word
 # brands ("Chicago Pneumatic") match before single-word substrings.
 KNOWN_BRANDS = [
+    # International compressor / pneumatic majors
     "Atlas Copco", "Chicago Pneumatic", "Ingersoll Rand", "Ingersoll-Rand",
-    "Gardner Denver", "ET-Compressors", "ET Compressors", "KraftMachine",
-    "Kraftmann", "Pneumatech", "Comprag", "Ceccato", "Dalgakiran",
-    "Denair", "Remeza", "ABAC", "Fiac", "Aircast", "Comaro",
-    "Frosp", "Fubag", "Metabo", "Wester", "Aurora",
-    "Denzel", "Resanta", "Hyundai", "Patriot", "Zitrek", "Voltel",
-    "Mattei", "Boge", "Kaeser", "Almig", "Quincy",
-    "Sullair", "Rotorcomp", "Fini", "Mainpack", "For-Est", "Megapromtech",
-    "Scheppach", "Кратон", "Зубр", "Вектор", "Беламос", "Калибр",
-    "Ariacom", "Comaro", "Dali", "Berg", "Voltel", "DENAIR",
+    "Gardner Denver", "Pneumatech", "Comprag", "Ceccato", "Dalgakiran",
+    "Mattei", "Boge", "Kaeser", "Almig", "Quincy", "Sullair", "Rotorcomp",
+    "Airman", "Doosan", "Kaishan", "Worthington", "Omi", "Abac", "ABAC",
+    "Fiac", "Fini", "Dali", "Berg", "ECO", "Varisco",
+    # Russian / CIS brands
+    "ET-Compressors", "ET Compressors", "KraftMachine", "Kraftmann",
+    "Remeza", "Aircast", "Comaro", "Frosp", "Zitrek", "Voltel",
+    "Mainpack", "For-Est", "Megapromtech", "Ariacom", "DENAIR", "Denair",
+    "РКЗ", "Кратон", "Зубр", "Вектор", "Беламос", "Калибр",
+    # General power tools
+    "Fubag", "Metabo", "Wester", "Aurora", "Denzel", "Resanta",
+    "Hyundai", "Patriot", "Scheppach", "Elitech", "Kraftmann",
+    "Spitzenreiter", "GMP", "Lupamat", "MERAN",
 ]
 _BRANDS_SORTED = sorted(KNOWN_BRANDS, key=len, reverse=True)
 

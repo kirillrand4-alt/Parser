@@ -128,8 +128,15 @@ class VpkScraper(BaseScraper):
         return clean_price(el.get_text()) if el else None
 
     def _breadcrumb(self, soup: BeautifulSoup) -> str:
-        items = soup.select(".breadcrumbs a, .breadcrumb a, [itemprop='itemListElement'] [itemprop='name']")
-        return " > ".join(i.get_text(strip=True) for i in items if i.get_text(strip=True))
+        # Use schema.org breadcrumb only — .breadcrumbs a also matches the
+        # entire left sidebar navigation on the Aspro/Bitrix template.
+        items = soup.select("[itemprop='itemListElement'] [itemprop='name']")
+        if items:
+            return " > ".join(i.get_text(strip=True) for i in items if i.get_text(strip=True))
+        nav = soup.select_one("nav.breadcrumb, nav[aria-label*='read']")
+        if nav:
+            return " > ".join(a.get_text(strip=True) for a in nav.select("a, span") if a.get_text(strip=True))
+        return ""
 
     def _image(self, soup: BeautifulSoup) -> str:
         img = soup.select_one("[itemprop='image'], .product-detail-gallery img, .detail-picture img")
