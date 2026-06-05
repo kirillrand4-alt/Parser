@@ -133,58 +133,108 @@ class BaseScraper(ABC):
             random.shuffle(pending)
 
         # 2) Parse each product, tracking errors and blocking.
-        errors = 0
-        blocked = 0
-        consecutive_blocks = 0
+        # WORKERS (or per-site WORKERS__<SITE>) sets concurrent requests per
+        # site. Default 1 = strictly sequential (unchanged behaviour). Robust
+        # nginx hosts tolerate 8-16; sites behind anti-bot should stay low.
+        key = self.site.replace(".", "_").replace("-", "_").upper()
+        workers = int(os.getenv(f"WORKERS__{key}") or os.getenv("WORKERS") or "1")
+        workers = max(1, workers)
+
+        stats = {"errors": 0, "blocked": 0, "consecutive_blocks": 0, "i": 0}
         bar = tqdm(total=len(pending), desc=f"{self.site:<20}", position=position,
                    unit="prod", leave=True, dynamic_ncols=True)
 
+        def handle(prod_url: str, product, exc: Exception | None):
+            """Update counters/checkpoint for one finished URL. Return product
+            to yield (or None). Sets stats['stop']=True on block threshold."""
+            if exc is None:
+                done_urls.add(prod_url)
+                failed_urls.discard(prod_url)
+                stats["consecutive_blocks"] = 0
+                return product
+            if isinstance(exc, requests.HTTPError):
+                status = getattr(exc.response, "status_code", None)
+                failed_urls.add(prod_url)
+                if status in BLOCK_STATUSES:
+                    stats["blocked"] += 1
+                    stats["consecutive_blocks"] += 1
+                    logger.warning("[%s] BLOCKED %s on %s", self.site, status, prod_url)
+                    if stats["consecutive_blocks"] >= MAX_CONSECUTIVE_BLOCKS:
+                        logger.error(
+                            "[%s] %d consecutive blocks — stopping. "
+                            "Re-run with RESUME=1 (and proxies) to continue.",
+                            self.site, stats["consecutive_blocks"])
+                        stats["stop"] = True
+                else:
+                    stats["errors"] += 1
+                    logger.warning("[%s] HTTP %s on %s", self.site, status, prod_url)
+            else:
+                stats["errors"] += 1
+                failed_urls.add(prod_url)
+                logger.warning("[%s] product error %s: %s", self.site, prod_url, exc)
+            return None
+
+        def advance():
+            stats["i"] += 1
+            bar.update(1)
+            bar.set_postfix(err=stats["errors"], blocked=stats["blocked"], refresh=False)
+            if stats["i"] % 25 == 0:
+                self._save_progress(done_urls, failed_urls)
+
         try:
-            for i, prod_url in enumerate(pending, 1):
-                try:
-                    product = self.parse_product(prod_url)
-                    done_urls.add(prod_url)
-                    failed_urls.discard(prod_url)
-                    consecutive_blocks = 0
-                    if product:
-                        yield product
-                except requests.HTTPError as exc:
-                    status = getattr(exc.response, "status_code", None)
-                    failed_urls.add(prod_url)
-                    if status in BLOCK_STATUSES:
-                        blocked += 1
-                        consecutive_blocks += 1
-                        logger.warning("[%s] BLOCKED %s on %s", self.site, status, prod_url)
-                        if consecutive_blocks >= MAX_CONSECUTIVE_BLOCKS:
-                            logger.error(
-                                "[%s] %d consecutive blocks — stopping. "
-                                "Re-run with RESUME=1 (and proxies) to continue.",
-                                self.site, consecutive_blocks)
+            if workers == 1:
+                for prod_url in pending:
+                    try:
+                        product = self.parse_product(prod_url)
+                        out = handle(prod_url, product, None)
+                    except Exception as exc:
+                        out = handle(prod_url, None, exc)
+                    if out:
+                        yield out
+                    advance()
+                    if stats.get("stop"):
+                        break
+            else:
+                from concurrent.futures import ThreadPoolExecutor
+                logger.info("[%s] parsing with %d concurrent workers", self.site, workers)
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    it = iter(pending)
+                    in_flight: dict = {}
+                    # Prime the pool, then refill as each future completes so we
+                    # never hold the whole work list in memory at once.
+                    for _ in range(workers):
+                        u = next(it, None)
+                        if u is None:
                             break
-                    else:
-                        errors += 1
-                        logger.warning("[%s] HTTP %s on %s", self.site, status, prod_url)
-                except (requests.ConnectionError, requests.Timeout) as exc:
-                    errors += 1
-                    failed_urls.add(prod_url)
-                    logger.warning("[%s] network error %s: %s", self.site, prod_url, exc)
-                except Exception as exc:
-                    errors += 1
-                    failed_urls.add(prod_url)
-                    logger.warning("[%s] product error %s: %s", self.site, prod_url, exc)
-
-                bar.update(1)
-                bar.set_postfix(err=errors, blocked=blocked, refresh=False)
-
-                # Persist progress periodically so a crash/kill loses little.
-                if i % 25 == 0:
-                    self._save_progress(done_urls, failed_urls)
+                        in_flight[pool.submit(self.parse_product, u)] = u
+                    from concurrent.futures import wait, FIRST_COMPLETED
+                    while in_flight:
+                        done, _ = wait(in_flight, return_when=FIRST_COMPLETED)
+                        for fut in done:
+                            u = in_flight.pop(fut)
+                            try:
+                                out = handle(u, fut.result(), None)
+                            except Exception as exc:
+                                out = handle(u, None, exc)
+                            if out:
+                                yield out
+                            advance()
+                        if stats.get("stop"):
+                            for fut in in_flight:
+                                fut.cancel()
+                            break
+                        # Refill one slot per completed future
+                        for _ in range(len(done)):
+                            u = next(it, None)
+                            if u is None:
+                                break
+                            in_flight[pool.submit(self.parse_product, u)] = u
         finally:
             bar.close()
             self._save_progress(done_urls, failed_urls)
-            if blocked:
+            if stats["blocked"]:
                 logger.warning("[%s] finished with %d blocked, %d other errors",
-                               self.site, blocked, errors)
+                               self.site, stats["blocked"], stats["errors"])
 
     # ------------------------------------------------------------------
     # Checkpoint helpers
