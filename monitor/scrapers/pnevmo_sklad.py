@@ -7,6 +7,7 @@ Pagination: ?PAGEN_1=N  (standard Bitrix).
 from __future__ import annotations
 
 import logging
+import os
 import re
 from typing import Optional
 
@@ -14,22 +15,18 @@ from bs4 import BeautifulSoup
 
 from ..base_scraper import BaseScraper
 from ..models import Product, clean_price, detect_series_status
+from ..sitemap import collect_product_urls
 
 logger = logging.getLogger(__name__)
 
-BASE = "https://pnevmo-sklad.ru"
+BASE = "https://www.pnevmo-sklad.ru"
+SITEMAP = "https://www.pnevmo-sklad.ru/sitemap.xml"
 
-CATEGORIES = [
-    "/catalog/kompressory/vintovye-kompressory/",
-    "/catalog/kompressory/porshnevye-kompressory/",
-    "/catalog/kompressory/bezmaslyane-kompressory/",
-    "/catalog/kompressory/spiralnye-kompressory/",
-    "/catalog/kompressory/dizelnyye-kompressory/",
-    "/catalog/pnevmooborudovanie/",
-]
-
-# YML feed paths to probe during recon
-FEED_PATHS = ["/yml/", "/catalog.yml", "/export.yml", "/upload/iblock/export.yml"]
+# Products live under /shop/<category>/.../<slug>. Keep compressor-relevant
+# categories; skip spare-part feeds to stay on topic. Tune via env.
+INCLUDE = ["/shop/"]
+EXCLUDE = ["ulyanovsk.", "/sitemap"]
+MAX_URLS = int(os.getenv("PNEVMO_SKLAD_MAX", "0")) or None
 
 
 class PnevmoSkladScraper(BaseScraper):
@@ -37,45 +34,15 @@ class PnevmoSkladScraper(BaseScraper):
     base_url = BASE
 
     def discover(self) -> list[str]:
-        return [BASE + cat for cat in CATEGORIES]
+        # Single sentinel; product URLs come from the sitemap in fetch_listing.
+        return ["__sitemap__"]
 
     def fetch_listing(self, url: str) -> list[str]:
-        product_urls: list[str] = []
-        page = 1
-        while True:
-            paged_url = url if page == 1 else f"{url}?PAGEN_1={page}"
-            try:
-                resp = self.client.get(paged_url)
-            except Exception as exc:
-                logger.warning("[pnevmo-sklad] listing error %s: %s", paged_url, exc)
-                break
-
-            soup = BeautifulSoup(resp.content, "lxml")
-            links = soup.select("div.catalog-section-item a.item-title, "
-                                ".catalog-item a[href*='/catalog/'], "
-                                "a.product-name[href*='/catalog/']")
-            if not links:
-                # Generic Bitrix selector
-                links = soup.select(".bx_catalog_item a.bx_catalog_item_title")
-
-            found = 0
-            for a in links:
-                href = a.get("href", "")
-                if "/catalog/" in href and href.count("/") >= 4:
-                    full = href if href.startswith("http") else BASE + href
-                    product_urls.append(full)
-                    found += 1
-
-            if found == 0:
-                break
-
-            # Check for next Bitrix page link
-            next_link = soup.select_one(f"a[href*='PAGEN_1={page + 1}']")
-            if not next_link:
-                break
-            page += 1
-
-        return list(dict.fromkeys(product_urls))
+        urls = collect_product_urls(
+            self.client, SITEMAP, include=INCLUDE, exclude=EXCLUDE, max_urls=MAX_URLS
+        )
+        logger.info("[pnevmo-sklad] %d product URLs from sitemap", len(urls))
+        return urls
 
     def parse_product(self, url: str) -> Optional[Product]:
         resp = self.client.get(url)

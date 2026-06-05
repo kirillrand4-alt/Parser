@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 import requests
 
@@ -65,7 +65,7 @@ def probe_site(base_url: str, timeout: int = 10) -> dict:
 
 def run_recon() -> None:
     print(f"\n{'=' * 60}")
-    print(f"Recon run: {datetime.utcnow().isoformat()}")
+    print(f"Recon run: {datetime.now(timezone.utc).isoformat()}")
     print(f"{'=' * 60}\n")
 
     for name, base in SITES.items():

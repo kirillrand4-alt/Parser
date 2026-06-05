@@ -5,7 +5,7 @@ import json
 import re
 import unicodedata
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -82,7 +82,7 @@ class Product:
     product_url: str = ""
     image_url: str = ""
     normalized_key: str = ""
-    scraped_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    scraped_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def __post_init__(self) -> None:
         if not self.normalized_key:

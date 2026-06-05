@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import click
@@ -31,7 +31,8 @@ def setup_logging(verbose: bool) -> None:
         handlers=[RichHandler(console=console, rich_tracebacks=True)],
     )
     # Silence noisy libraries
-    for lib in ("requests", "urllib3", "charset_normalizer"):
+    for lib in ("requests", "urllib3", "charset_normalizer",
+                "requests_cache", "requests_cache.backends", "requests_cache.policy"):
         logging.getLogger(lib).setLevel(logging.WARNING)
 
 
@@ -49,7 +50,7 @@ def cli() -> None:
 def scrape_cmd(site: str, out: str | None, db: str, verbose: bool) -> None:
     """Scrape one or all competitor sites."""
     setup_logging(verbose)
-    run_id = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     csv_path = Path(out) if out else Path(f"{CSV_BASE}_{run_id}.csv")
 
     if site == "all":
