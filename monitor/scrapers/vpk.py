@@ -74,6 +74,8 @@ class VpkScraper(BaseScraper):
             # page that adds no new product link means we've reached the end.
             if new == 0:
                 break
+            if page % 25 == 0:
+                logger.info("[v-p-k] catalog page %d, %d URLs so far", page, len(urls))
         if os.getenv("SHUFFLE", "").strip() in ("1", "true", "yes"):
             import random
             random.shuffle(urls)
