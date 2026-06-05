@@ -24,8 +24,8 @@ SITE_SITEMAP: dict[str, dict] = {
         "include": [], "exclude": ["sitemap", "?", "/user", "/cart", "/search"],
     },
     "rutector.ru": {
-        "sitemap": "https://rutector.ru/sitemap.xml",
-        "include": ["/catalog/", "/product/"], "exclude": ["/sitemap"],
+        "sitemap": "https://rutector.ru/sitemap-iblock-4.xml",
+        "include": ["/products/"], "exclude": ["/sitemap"],
     },
     "v-p-k.ru": {
         "sitemap": "https://v-p-k.ru/sitemap.xml",
