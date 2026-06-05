@@ -55,9 +55,8 @@ COMPRESSOR_SUBCATS = {
 class PnevmoSkladScraper(BaseScraper):
     site = "pnevmo-sklad.ru"
     base_url = BASE
-    # Robust nginx/openresty host — can take a faster cadence
-    delay_min = 0.4
-    delay_max = 0.9
+    delay_min = 10.0
+    delay_max = 14.0
 
     def discover(self) -> list[str]:
         # Single sentinel; product URLs come from the sitemap in fetch_listing.
