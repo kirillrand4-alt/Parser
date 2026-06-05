@@ -1,38 +1,38 @@
 """Scraper for rutector.ru.
 
-Engine: 1С-Битрикс (inferred from typical URL patterns).
-Source: HTML listing with Bitrix pagination (?PAGEN_1=N).
-Also probes for YML feed on first run.
+Engine: 1С-Битрикс.
+Source: sitemap-iblock-4.xml → products at /products/<slug> (~23k items).
+
+Markup:
+- specs:        table.zebra rows (label | value)
+- price:        [itemprop=price] content (0 / "по запросу" → None)
+- availability: .not-available_* present → price-on-request ("под заказ")
+- brand:        specs "Бренд"/"Производитель", else breadcrumb
 """
 from __future__ import annotations
 
 import logging
+import os
 import re
 from typing import Optional
 
 from bs4 import BeautifulSoup
 
 from ..base_scraper import BaseScraper
-from ..models import Product, clean_price, detect_series_status
+from ..models import (
+    Product, clean_price, has_discontinued_signal, status_from_availability,
+)
+from ..sitemap import collect_product_urls
 
 logger = logging.getLogger(__name__)
 
 BASE = "https://rutector.ru"
+SITEMAP = "https://rutector.ru/sitemap-iblock-4.xml"
+INCLUDE = ["/products/"]
+EXCLUDE = ["/sitemap"]
+MAX_URLS = int(os.getenv("RUTECTOR_MAX", "0")) or None
 
-CATEGORIES = [
-    "/catalog/kompressory/vintovye/",
-    "/catalog/kompressory/porshnevye/",
-    "/catalog/kompressory/bezmaslyane/",
-    "/catalog/pnevmooborudovanie/",
-    "/catalog/kompressory/",
-]
-
-YML_PATHS = [
-    "/upload/yandex/yandex.xml",
-    "/bitrix/catalog_export/",
-    "/yml/",
-    "/upload/export.yml",
-]
+_BRAND_KEYS = ("Бренд", "Производитель", "Марка", "Торговая марка")
 
 
 class RutectorScraper(BaseScraper):
@@ -40,81 +40,54 @@ class RutectorScraper(BaseScraper):
     base_url = BASE
 
     def discover(self) -> list[str]:
-        return [BASE + cat for cat in CATEGORIES]
+        return ["__sitemap__"]
 
     def fetch_listing(self, url: str) -> list[str]:
-        product_urls: list[str] = []
-        page = 1
-        while True:
-            paged = url if page == 1 else f"{url}?PAGEN_1={page}"
-            try:
-                resp = self.client.get(paged)
-            except Exception as exc:
-                logger.warning("[rutector] listing error %s: %s", paged, exc)
-                break
-
-            soup = BeautifulSoup(resp.content, "lxml")
-            # Bitrix standard catalog selectors
-            links = soup.select(
-                ".catalog-item a.catalog-item-title, "
-                ".bx-catalog-item a.item-title, "
-                ".catalog_item_wrap a[href*='/catalog/'], "
-                ".product-item a.product-title"
-            )
-            found = 0
-            for a in links:
-                href = a.get("href", "")
-                if href and "/catalog/" in href:
-                    full = href if href.startswith("http") else BASE + href
-                    product_urls.append(full)
-                    found += 1
-
-            if found == 0:
-                break
-            # Bitrix pagination: look for next page anchor
-            next_link = soup.select_one(f"a[href*='PAGEN_1={page + 1}']")
-            if not next_link:
-                break
-            page += 1
-
-        return list(dict.fromkeys(product_urls))
+        urls = collect_product_urls(
+            self.client, SITEMAP, include=INCLUDE, exclude=EXCLUDE, max_urls=MAX_URLS
+        )
+        logger.info("[rutector] %d product URLs from sitemap", len(urls))
+        return urls
 
     def parse_product(self, url: str) -> Optional[Product]:
         resp = self.client.get(url)
         soup = BeautifulSoup(resp.content, "lxml")
         page_text = soup.get_text(" ", strip=True)
 
-        name = self._text(soup, "h1") or ""
-        brand = (
-            self._text(soup, "[itemprop='brand']")
-            or self._text(soup, ".brand-name")
-            or self._breadcrumb_part(soup, -2)
-        )
-        model = (
-            self._text(soup, "[itemprop='model']")
-            or self._text(soup, ".article-value")
-            or name
-        )
-        sku = self._text(soup, "[itemprop='sku'], .product-article")
+        h1 = soup.select_one("h1")
+        name = h1.get_text(" ", strip=True) if h1 else ""
 
-        price = self._price(soup, "[itemprop='price'], .price, .cost-price")
-        old_price = self._price(soup, ".old-price, .price-old")
+        specs = self._extract_specs(soup)
+
+        brand = ""
+        for k in _BRAND_KEYS:
+            if specs.get(k):
+                brand = specs[k]
+                break
+        if not brand:
+            brand = self._breadcrumb_brand(soup)
+
+        sku = specs.get("Артикул", "") or specs.get("Код товара", "")
+        model = sku or name
+
+        price = self._price(soup)
+        old_price = self._old_price(soup)
         discount_pct = None
         if price and old_price and old_price > price:
             discount_pct = round((old_price - price) / old_price * 100, 1)
 
-        avail_el = soup.select_one("[itemprop='availability'], .availability, .instock")
-        availability = avail_el.get_text(strip=True) if avail_el else ""
-        series_status = detect_series_status(page_text)
-        if series_status == "неизвестно":
-            low = availability.lower()
-            if "в наличии" in low or "есть на складе" in low:
-                series_status = "в наличии"
-            elif "нет" in low:
-                series_status = "нет в наличии"
+        # Availability: "not-available" block means price-on-request / orderable
+        if soup.select_one(".not-available_main, .not-available_block"):
+            availability = "по запросу"
+            series_status = "под заказ"
+        else:
+            av = soup.select_one("[class*='in-stock'], [class*='available'], [class*='nalichie']")
+            availability = av.get_text(" ", strip=True) if av else ("в наличии" if price else "")
+            series_status = status_from_availability(availability) or ("в наличии" if price else "неизвестно")
+        if has_discontinued_signal(page_text):
+            series_status = "снято"
 
-        replacement_model = self._get_replacement(soup)
-        specs = self._extract_specs(soup)
+        replacement_model = self._replacement(soup)
         category_path = self._breadcrumb(soup)
         image_url = self._image(soup)
 
@@ -128,52 +101,48 @@ class RutectorScraper(BaseScraper):
 
     # ------------------------------------------------------------------
 
-    def _text(self, soup: BeautifulSoup, sel: str) -> str:
-        el = soup.select_one(sel)
-        return el.get_text(strip=True) if el else ""
+    def _price(self, soup: BeautifulSoup) -> float | None:
+        el = soup.select_one("[itemprop='price']")
+        if el:
+            p = clean_price(el.get("content") or el.get_text())
+            if p:  # 0 / empty → None (по запросу)
+                return p
+        el = soup.select_one(".price-current, .monoblock-threaded_price .price")
+        return clean_price(el.get_text()) if el else None
 
-    def _price(self, soup: BeautifulSoup, sel: str) -> float | None:
-        el = soup.select_one(sel)
-        if not el:
-            return None
-        return clean_price(el.get("content") or el.get_text())
-
-    def _breadcrumb(self, soup: BeautifulSoup) -> str:
-        items = soup.select(".breadcrumb li, .breadcrumbs span, nav[aria-label] li")
-        return " > ".join(i.get_text(strip=True) for i in items if i.get_text(strip=True))
-
-    def _breadcrumb_part(self, soup: BeautifulSoup, idx: int) -> str:
-        items = [i.get_text(strip=True) for i in soup.select(".breadcrumb li, .breadcrumbs span") if i.get_text(strip=True)]
-        try:
-            return items[idx]
-        except IndexError:
-            return ""
+    def _old_price(self, soup: BeautifulSoup) -> float | None:
+        el = soup.select_one(".old-price, .price-old, [class*='old_price'], [class*='old-price']")
+        return clean_price(el.get_text()) if el else None
 
     def _extract_specs(self, soup: BeautifulSoup) -> dict:
         specs: dict = {}
-        for row in soup.select("table.props tr, .properties-table tr, .characteristics tr, .product-props tr"):
+        for row in soup.select("table.zebra tr, table.props tr, .characteristics tr"):
             cells = row.select("td, th")
             if len(cells) >= 2:
-                k = cells[0].get_text(strip=True)
-                v = cells[-1].get_text(strip=True)
+                k = cells[0].get_text(" ", strip=True).rstrip(":").strip()
+                v = cells[-1].get_text(" ", strip=True)
                 if k and v:
                     specs[k] = v
-        if not specs:
-            for dl in soup.select("dl"):
-                for dt, dd in zip(dl.select("dt"), dl.select("dd")):
-                    specs[dt.get_text(strip=True)] = dd.get_text(strip=True)
         return specs
 
+    def _breadcrumb(self, soup: BeautifulSoup) -> str:
+        items = soup.select(".breadcrumb a, .breadcrumbs a, [itemprop='itemListElement'] [itemprop='name']")
+        return " > ".join(i.get_text(strip=True) for i in items if i.get_text(strip=True))
+
+    def _breadcrumb_brand(self, soup: BeautifulSoup) -> str:
+        items = [i.get_text(strip=True) for i in soup.select(".breadcrumb a, .breadcrumbs a") if i.get_text(strip=True)]
+        return items[-1] if items else ""
+
     def _image(self, soup: BeautifulSoup) -> str:
-        img = soup.select_one("[itemprop='image'], .detail-picture img, .product-image-main img")
+        img = soup.select_one("[itemprop='image'], .product-image img, .detail-picture img")
         if img:
-            src = img.get("data-src") or img.get("src", "")
+            src = img.get("data-src") or img.get("content") or img.get("src", "")
             if src:
                 return src if src.startswith("http") else BASE + src
         return ""
 
-    def _get_replacement(self, soup: BeautifulSoup) -> str:
-        for el in soup.select("p, span, div.note"):
+    def _replacement(self, soup: BeautifulSoup) -> str:
+        for el in soup.select("p, .note, .replacement"):
             text = el.get_text(strip=True)
             if any(k in text.lower() for k in ("аналог", "замена", "заменяет", "заменён")):
                 m = re.search(r"[A-ZА-Я][\w\-]{3,}", text)
