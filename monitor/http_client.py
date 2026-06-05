@@ -1,6 +1,7 @@
 """HTTP client with caching, retries, rate-limiting and realistic headers."""
 from __future__ import annotations
 
+import os
 import random
 import time
 from pathlib import Path
@@ -10,8 +11,12 @@ import requests
 import requests_cache
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-CACHE_DIR = Path("cache")
-CACHE_DIR.mkdir(exist_ok=True)
+# HTTP cache can grow to many GB on a full scrape. It is purely an
+# intra-session optimization (resume relies on checkpoints, not this cache),
+# so it can live on ephemeral disk: set HTTP_CACHE_DIR=/content/http_cache to
+# keep it off a size-limited Google Drive. Defaults to ./cache.
+CACHE_DIR = Path(os.getenv("HTTP_CACHE_DIR", "cache"))
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 DEFAULT_HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
