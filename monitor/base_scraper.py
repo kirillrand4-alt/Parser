@@ -95,19 +95,30 @@ class BaseScraper(ABC):
         failed_urls: set[str] = set(self._checkpoint.get("failed_urls", [])) if resume else set()
 
         # 1) Build the full work list first so the bar has a real total.
+        # For scrapers that do expensive discovery (e.g. paginated catalog walk),
+        # cache the URL list in the checkpoint so subsequent runs skip the crawl.
         category_urls = self.discover()
         logger.info("[%s] %d categories to crawl", self.site, len(category_urls))
 
         product_urls: list[str] = []
-        seen: set[str] = set()
-        for cat_url in category_urls:
-            try:
-                for u in self.fetch_listing(cat_url):
-                    if u not in seen:
-                        seen.add(u)
-                        product_urls.append(u)
-            except Exception as exc:
-                logger.warning("[%s] listing error %s: %s", self.site, cat_url, exc)
+        cached_urls: list[str] = self._checkpoint.get("product_urls", [])
+        if resume and cached_urls:
+            product_urls = cached_urls
+            logger.info("[%s] using %d cached product URLs from checkpoint",
+                        self.site, len(product_urls))
+        else:
+            seen: set[str] = set()
+            for cat_url in category_urls:
+                try:
+                    for u in self.fetch_listing(cat_url):
+                        if u not in seen:
+                            seen.add(u)
+                            product_urls.append(u)
+                except Exception as exc:
+                    logger.warning("[%s] listing error %s: %s", self.site, cat_url, exc)
+            # Persist URL list so next RESUME run skips discovery
+            self._checkpoint["product_urls"] = product_urls
+            self._save_progress(done_urls, failed_urls)
 
         pending = [u for u in product_urls if u not in done_urls]
         if resume and len(pending) < len(product_urls):
