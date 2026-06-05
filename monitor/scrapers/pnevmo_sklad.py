@@ -14,7 +14,10 @@ from typing import Optional
 from bs4 import BeautifulSoup
 
 from ..base_scraper import BaseScraper
-from ..models import Product, clean_price, detect_series_status
+from ..models import (
+    Product, clean_price, detect_series_status,
+    has_discontinued_signal, status_from_availability,
+)
 from ..sitemap import collect_product_urls
 
 logger = logging.getLogger(__name__)
@@ -69,15 +72,11 @@ class PnevmoSkladScraper(BaseScraper):
 
         availability_el = soup.select_one(".pricebox__instock, .ltprod__instock, .prodbig__instock")
         availability = availability_el.get_text(" ", strip=True) if availability_el else ""
-        series_status = detect_series_status(page_text)
-        if series_status == "неизвестно":
-            lower = availability.lower()
-            if "в наличии" in lower or "есть" in lower:
-                series_status = "в наличии"
-            elif "под заказ" in lower:
-                series_status = "под заказ"
-            elif "нет" in lower:
-                series_status = "нет в наличии"
+        # Trust the product's own availability block first; only let strong
+        # "снято/архив" signals from the page override it.
+        series_status = status_from_availability(availability)
+        if has_discontinued_signal(page_text):
+            series_status = "снято"
 
         category_path = self._breadcrumb(soup)
         image_url = self._get_image(soup)

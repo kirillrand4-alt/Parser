@@ -62,6 +62,31 @@ def detect_series_status(page_text: str) -> str:
     return "неизвестно"
 
 
+# Strong "discontinued" markers — safe to scan across a whole page because they
+# rarely appear by accident (unlike "нет в наличии" which shows up in sidebars).
+_DISCONTINUED_SIGNALS = (
+    "снято с производства", "снят с производства", "архивный товар", "архивная модель",
+    "выведен из ассортимента", "устаревшая модель", "не производится",
+)
+
+
+def has_discontinued_signal(page_text: str) -> bool:
+    lower = page_text.lower()
+    return any(s in lower for s in _DISCONTINUED_SIGNALS)
+
+
+def status_from_availability(availability: str) -> str:
+    """Map a product's own availability text to a normalized status."""
+    low = availability.lower()
+    if "в наличии" in low or "есть" in low or "на складе" in low:
+        return "в наличии"
+    if "под заказ" in low or "ожидается" in low or "срок поставки" in low:
+        return "под заказ"
+    if "нет" in low or "распродан" in low or "отсутств" in low:
+        return "нет в наличии"
+    return "неизвестно"
+
+
 @dataclass
 class Product:
     site: str
