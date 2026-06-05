@@ -8,8 +8,10 @@ Images are lazy-loaded with placeholder ll.png — read data-src attribute.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import urllib.parse
+import xml.etree.ElementTree as ET
 from typing import Optional
 
 from bs4 import BeautifulSoup
@@ -20,6 +22,11 @@ from ..models import Product, clean_price, detect_series_status
 logger = logging.getLogger(__name__)
 
 BASE = "https://compressortyt.ru"
+YML_URL = "https://compressortyt.ru/yml/"
+
+# Enrich each product with full specs from its HTML page.
+# Costs ~17k extra requests; off by default. Enable via COMPRESSORTYT_ENRICH=1.
+ENRICH_SPECS = os.getenv("COMPRESSORTYT_ENRICH", "0") == "1"
 
 # Leaf category slugs to crawl (avoids the huge root /stanciya/kompr/ page)
 CATEGORIES = [
@@ -44,6 +51,87 @@ class CompressortytScraper(BaseScraper):
 
     def discover(self) -> list[str]:
         return [BASE + cat for cat in CATEGORIES]
+
+    # ------------------------------------------------------------------
+    # YML feed (primary source — full catalog with prices in one request)
+    # ------------------------------------------------------------------
+
+    def scrape(self):  # type: ignore[override]
+        """Parse the YML feed; optionally enrich each product with HTML specs."""
+        resp = self.client.get(YML_URL, timeout=60)
+        root = ET.fromstring(resp.content)
+        shop = root.find("shop")
+        if shop is None:
+            logger.warning("[compressortyt] no <shop> in feed, falling back to HTML")
+            yield from super().scrape()
+            return
+
+        # Build category id → name and parent map for full path resolution
+        cat_name: dict[str, str] = {}
+        cat_parent: dict[str, str] = {}
+        for c in shop.findall(".//category"):
+            cid = c.get("id", "")
+            cat_name[cid] = (c.text or "").strip()
+            if c.get("parentId"):
+                cat_parent[cid] = c.get("parentId")
+
+        def cat_path(cid: str) -> str:
+            parts, seen = [], set()
+            while cid and cid in cat_name and cid not in seen:
+                seen.add(cid)
+                parts.append(cat_name[cid])
+                cid = cat_parent.get(cid, "")
+            return " > ".join(reversed(parts))
+
+        offers = shop.findall(".//offer")
+        logger.info("[compressortyt] %d offers in feed", len(offers))
+
+        for offer in offers:
+            try:
+                product = self._offer_to_product(offer, cat_path)
+            except Exception as exc:
+                logger.debug("[compressortyt] offer error: %s", exc)
+                continue
+            if ENRICH_SPECS and product.product_url:
+                try:
+                    self._enrich(product)
+                except Exception as exc:
+                    logger.debug("[compressortyt] enrich error %s: %s", product.product_url, exc)
+            yield product
+
+    def _offer_to_product(self, offer: ET.Element, cat_path) -> Product:
+        def t(tag: str) -> str:
+            el = offer.find(tag)
+            return (el.text or "").strip() if el is not None else ""
+
+        available = offer.get("available", "true") == "true"
+        currency = t("currencyId").replace("RUR", "RUB") or "RUB"
+        return Product(
+            site=self.site,
+            brand=t("vendor"),
+            name=t("name"),
+            model=t("name"),
+            sku=offer.get("id", ""),
+            price=clean_price(t("price")),
+            old_price=clean_price(t("oldprice")),
+            currency=currency,
+            availability="в наличии" if available else "нет в наличии",
+            series_status="в наличии" if available else "нет в наличии",
+            specs={},
+            category_path=cat_path(t("categoryId")),
+            product_url=t("url"),
+            image_url=t("picture"),
+        )
+
+    def _enrich(self, product: Product) -> None:
+        """Fetch product page and fill specs + refine status."""
+        resp = self.client.get(product.product_url)
+        soup = BeautifulSoup(resp.content, "lxml")
+        product.specs = self._extract_specs(soup)
+        page_text = soup.get_text(" ", strip=True)
+        status = detect_series_status(page_text)
+        if status != "неизвестно":
+            product.series_status = status
 
     def fetch_listing(self, url: str) -> list[str]:
         """Collect all product URLs from a category, following pagination."""

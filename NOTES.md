@@ -1,9 +1,30 @@
 # Разведка сайтов — результаты
 
-> Обновлено: 2026-06-04  
-> Среда исполнения в облаке не имеет выхода во внешнюю сеть, поэтому разведка
-> основана на известных паттернах этих сайтов и должна быть уточнена при первом
-> локальном запуске скриптом `python -m monitor --recon`.
+> Обновлено: 2026-06-05 (реальная разведка через Google Colab)
+
+## Итог разведки (проверено)
+
+| Сайт | Server | YML-фид | Источник |
+|---|---|---|---|
+| **compressortyt.ru** | nginx | ✅ `/yml/` (12 МБ, ~17k товаров, есть цены) | **YML-фид** + добор specs со страниц |
+| aerocompressors.ru | ddos-guard | ❌ (XML-пути отдают `method="notfound"`) | HTML (осторожно, ddos-guard) |
+| pnevmo-sklad.ru | nginx | ❌ только sitemap.xml | HTML + sitemap |
+| pnevmoteh.ru | openresty | ❌ только sitemap.xml | HTML + sitemap |
+| rutector.ru | nginx | ❌ только sitemap.xml | HTML + sitemap |
+| v-p-k.ru | nginx | ❌ только sitemap.xml | HTML + sitemap |
+
+### Структура YML-фида compressortyt.ru
+`<offer id available>`: `url, price, currencyId(RUR), categoryId, picture, name, vendor`.
+Характеристик (`param`) в фиде НЕТ — добор со страниц товара (флаг `COMPRESSORTYT_ENRICH=1`).
+Категории — дерево через `parentId`, путь восстанавливается рекурсивно.
+
+### Важно
+- aerocompressors.ru за **ddos-guard** — возможна JS-проверка/блок; держать низкий темп.
+- У всех 4 «HTML-сайтов» есть `sitemap.xml` — можно брать URL товаров оттуда.
+
+---
+
+> Историческая разметка ниже (гипотезы до разведки).
 
 ---
 
