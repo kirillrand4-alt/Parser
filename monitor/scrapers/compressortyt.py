@@ -61,14 +61,20 @@ class CompressortytScraper(BaseScraper):
     # YML feed (primary source — full catalog with prices in one request)
     # ------------------------------------------------------------------
 
-    def scrape(self):  # type: ignore[override]
+    def scrape(self, position: int = 0):  # type: ignore[override]
         """Parse the YML feed; optionally enrich each product with HTML specs."""
+        try:
+            from tqdm.auto import tqdm
+        except Exception:
+            def tqdm(iterable=None, **_):
+                return iterable if iterable is not None else iter(())
+
         resp = self.client.get(YML_URL, timeout=60)
         root = ET.fromstring(resp.content)
         shop = root.find("shop")
         if shop is None:
             logger.warning("[compressortyt] no <shop> in feed, falling back to HTML")
-            yield from super().scrape()
+            yield from super().scrape(position=position)
             return
 
         # Build category id → name and parent map for full path resolution
@@ -93,18 +99,29 @@ class CompressortytScraper(BaseScraper):
             offers = offers[:MAX_OFFERS]
         logger.info("[compressortyt] %d offers in feed", len(offers))
 
-        for offer in offers:
-            try:
-                product = self._offer_to_product(offer, cat_path)
-            except Exception as exc:
-                logger.debug("[compressortyt] offer error: %s", exc)
-                continue
-            if ENRICH_SPECS and product.product_url:
+        errors = 0
+        bar = tqdm(total=len(offers), desc=f"{'compressortyt.ru':<20}", position=position,
+                   unit="prod", leave=True, dynamic_ncols=True)
+        try:
+            for offer in offers:
                 try:
-                    self._enrich(product)
+                    product = self._offer_to_product(offer, cat_path)
                 except Exception as exc:
-                    logger.debug("[compressortyt] enrich error %s: %s", product.product_url, exc)
-            yield product
+                    logger.debug("[compressortyt] offer error: %s", exc)
+                    errors += 1
+                    bar.update(1)
+                    bar.set_postfix(err=errors, refresh=False)
+                    continue
+                if ENRICH_SPECS and product.product_url:
+                    try:
+                        self._enrich(product)
+                    except Exception as exc:
+                        logger.debug("[compressortyt] enrich error %s: %s", product.product_url, exc)
+                bar.update(1)
+                bar.set_postfix(err=errors, refresh=False)
+                yield product
+        finally:
+            bar.close()
 
     def _offer_to_product(self, offer: ET.Element, cat_path) -> Product:
         def t(tag: str) -> str:
