@@ -70,7 +70,8 @@ class PnevmoSkladScraper(BaseScraper):
 
         # Price: .pricebox__price holds the number, or "Цена по запросу" → None
         price = self._get_price(soup, ".pricebox__price, .prodsticky__price")
-        old_price = self._get_price(soup, ".pricebox__oldprice, .price-old")
+        old_price = self._get_price(
+            soup, ".pricebox__oldprice, .hprod__oldprice, .price-old")
         discount_pct = self._calc_discount(price, old_price)
 
         availability_el = soup.select_one(".pricebox__instock, .ltprod__instock, .prodbig__instock")
