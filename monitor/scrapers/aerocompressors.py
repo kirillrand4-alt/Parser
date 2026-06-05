@@ -59,29 +59,23 @@ class AerocompressorsScraper(BaseScraper):
         resp = self.client.get(url)
         soup = BeautifulSoup(resp.content, "lxml")
 
-        price = self._price(soup)
         specs = self._extract_specs(soup)
+        # Category pages carry an itemprop=price ("from" price) but no specs
+        # table; only real product pages have table.tech — require it.
+        if not specs:
+            return None
 
-        # Distinguish a product (has a price block or a specs table) from a
-        # category listing. A product with "цена по запросу" has no number but
-        # still has the price element/specs — keep it as "под заказ".
-        has_price_block = soup.select_one("[itemprop='price'], .price") is not None
-        if price is None and not specs and not has_price_block:
-            return None  # category page
-
-        page_text = soup.get_text(" ", strip=True)
+        price = self._price(soup)
         h1 = soup.select_one("h1")
         name = h1.get_text(" ", strip=True) if h1 else ""
 
+        # Brand from specs, else from the product name (the nav brand link is a
+        # generic "Производители" label, so it is not used).
         brand = ""
         for k in _BRAND_KEYS:
             if specs.get(k):
                 brand = specs[k]
                 break
-        if not brand:
-            a = soup.select_one("a[href*='/katalog_po_brendam/']")
-            if a and a.get_text(strip=True):
-                brand = a.get_text(strip=True)
         if not brand:
             brand = extract_brand_from_name(name)
 
@@ -96,7 +90,9 @@ class AerocompressorsScraper(BaseScraper):
             availability, series_status = "в наличии", "в наличии"
         else:
             availability, series_status = "цена по запросу", "под заказ"
-        if has_discontinued_signal(page_text):
+        # The phrase "снято с производства" appears in the site-wide catalog
+        # menu, so only trust it when it is in the product's own H1/name.
+        if has_discontinued_signal(name):
             series_status = "снято"
             availability = "снято с производства"
 
