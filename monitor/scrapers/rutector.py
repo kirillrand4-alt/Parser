@@ -58,6 +58,9 @@ class RutectorScraper(BaseScraper):
             self.client, SITEMAP, include=INCLUDE, exclude=EXCLUDE, max_urls=None
         )
         urls = [u for u in urls if any(k in u.lower() for k in SLUG_KEYWORDS)]
+        if os.getenv("SHUFFLE", "").strip() in ("1", "true", "yes"):
+            import random
+            random.shuffle(urls)
         if MAX_URLS:
             urls = urls[:MAX_URLS]
         logger.info("[rutector] %d product URLs from sitemap (after slug filter)", len(urls))
@@ -74,6 +77,8 @@ class RutectorScraper(BaseScraper):
         specs, is_matrix = self._extract_specs(soup)
         if is_matrix:
             return None  # multi-variant series page — skip
+        if not specs:
+            return None  # series/landing page without a characteristics table
 
         brand = ""
         for k in _BRAND_KEYS:

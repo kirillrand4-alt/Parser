@@ -78,6 +78,11 @@ class AerocompressorsScraper(BaseScraper):
             u for u in urls
             if _top_category(u) in RELEVANT_CATEGORIES
         ]
+        # Shuffle BEFORE the MAX cap so a capped test run samples the whole
+        # catalog (the first sitemap URLs are category/landing pages).
+        if os.getenv("SHUFFLE", "").strip() in ("1", "true", "yes"):
+            import random
+            random.shuffle(urls)
         if MAX_URLS:
             urls = urls[:MAX_URLS]
         logger.info("[aerocompressors] %d product URLs from sitemap", len(urls))

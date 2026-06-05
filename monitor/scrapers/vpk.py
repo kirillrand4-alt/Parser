@@ -59,6 +59,9 @@ class VpkScraper(BaseScraper):
             self.client, SITEMAP, include=INCLUDE, exclude=EXCLUDE, max_urls=None
         )
         urls = [u for u in urls if any(k in u.lower() for k in SLUG_KEYWORDS)]
+        if os.getenv("SHUFFLE", "").strip() in ("1", "true", "yes"):
+            import random
+            random.shuffle(urls)
         if MAX_URLS:
             urls = urls[:MAX_URLS]
         logger.info("[v-p-k] %d product URLs from sitemap (after slug filter)", len(urls))

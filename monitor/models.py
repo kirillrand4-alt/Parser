@@ -105,7 +105,8 @@ KNOWN_BRANDS = [
     "Gardner Denver", "Pneumatech", "Comprag", "Ceccato", "Dalgakiran",
     "Mattei", "Boge", "Kaeser", "Almig", "Quincy", "Sullair", "Rotorcomp",
     "Airman", "Doosan", "Kaishan", "Worthington", "Omi", "Abac", "ABAC",
-    "Fiac", "Fini", "Dali", "Berg", "ECO", "Varisco",
+    "Fiac", "Fini", "Dali", "Berg", "ECO", "Varisco", "CompAir",
+    "Atmos", "Ozen", "Coaire", "Xeleron", "Comp Air",
     # Russian / CIS brands
     "ET-Compressors", "ET Compressors", "KraftMachine", "Kraftmann",
     "Remeza", "Aircast", "Comaro", "Frosp", "Zitrek", "Voltel",
@@ -173,7 +174,8 @@ _MODEL_NOISE_WORDS = (
     "компрессорная", "компрессорный", "компрессор", "станция", "установка",
     "воздушный", "воздушная", "масляный", "масляная", "привод", "прямой",
     "ременной", "ременная", "с", "на", "ресивере", "электродвигателем",
-    "оборудование", "генератор",
+    "оборудование", "генератор", "водяным", "впрыском", "впрыск",
+    "охлаждения", "охлаждением", "воздушного", "воздушным", "винтовым",
 )
 _MODEL_NOISE_RE = re.compile(
     r"\b(?:" + "|".join(re.escape(w) for w in _MODEL_NOISE_WORDS) + r")\b",
