@@ -24,22 +24,17 @@ from ..models import (
     Product, clean_price, has_discontinued_signal, status_from_availability,
     extract_brand_from_name, extract_model_from_name,
 )
-from ..sitemap import collect_product_urls
 
 logger = logging.getLogger(__name__)
 
 BASE = "https://www.v-p-k.ru"
-SITEMAP = "https://www.v-p-k.ru/sitemap-iblock-248.xml"
-INCLUDE = ["/product/"]
-EXCLUDE = ["/sitemap"]
 MAX_URLS = int(os.getenv("VPK_MAX", "0")) or None
 
-# v-p-k sells 39k items (generators, welding, construction etc.); keep only
-# compressor-related slugs identified by URL keyword.
-SLUG_KEYWORDS = (
-    "kompressor", "vintov", "porshnev", "pnevmo",
-    "resiver", "ressiver", "osushitel", "vozduh",
-)
+# v-p-k product slugs are model names ("/product/easy-air/"), so a sitemap slug
+# filter cannot find compressors. Instead we walk the catalog category, which
+# lists exactly the compressors the site counts (~10.5k over ~331 pages).
+CATEGORY = "https://www.v-p-k.ru/catalog/kompressory/"
+MAX_PAGES = 400  # safety cap; real catalog is ~331 pages
 
 _BRAND_KEYS = ("Бренд", "Производитель", "Марка", "Торговая марка")
 
@@ -52,19 +47,39 @@ class VpkScraper(BaseScraper):
     delay_max = 0.9
 
     def discover(self) -> list[str]:
-        return ["__sitemap__"]
+        return ["__category__"]
 
     def fetch_listing(self, url: str) -> list[str]:
-        urls = collect_product_urls(
-            self.client, SITEMAP, include=INCLUDE, exclude=EXCLUDE, max_urls=None
-        )
-        urls = [u for u in urls if any(k in u.lower() for k in SLUG_KEYWORDS)]
+        seen: set[str] = set()
+        urls: list[str] = []
+        for page in range(1, MAX_PAGES + 1):
+            page_url = CATEGORY if page == 1 else f"{CATEGORY}?PAGEN_1={page}"
+            try:
+                resp = self.client.get(page_url, timeout=40)
+            except Exception as exc:
+                logger.warning("[v-p-k] page %d fetch error: %s", page, exc)
+                break
+            soup = BeautifulSoup(resp.content, "lxml")
+            new = 0
+            for a in soup.select("a[href*='/product/']"):
+                href = (a.get("href") or "").split("?")[0]
+                if not href:
+                    continue
+                full = href if href.startswith("http") else BASE + href
+                if full not in seen:
+                    seen.add(full)
+                    urls.append(full)
+                    new += 1
+            # Bitrix serves the last page's content for out-of-range pages, so a
+            # page that adds no new product link means we've reached the end.
+            if new == 0:
+                break
         if os.getenv("SHUFFLE", "").strip() in ("1", "true", "yes"):
             import random
             random.shuffle(urls)
         if MAX_URLS:
             urls = urls[:MAX_URLS]
-        logger.info("[v-p-k] %d product URLs from sitemap (after slug filter)", len(urls))
+        logger.info("[v-p-k] %d product URLs from catalog pagination", len(urls))
         return urls
 
     def parse_product(self, url: str) -> Optional[Product]:

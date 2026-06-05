@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import urllib.parse
 from typing import Optional
 
 from bs4 import BeautifulSoup
@@ -26,11 +27,29 @@ logger = logging.getLogger(__name__)
 BASE = "https://www.pnevmo-sklad.ru"
 SITEMAP = "https://www.pnevmo-sklad.ru/sitemap.xml"
 
-# Products live under /shop/<category>/.../<slug>. Keep compressor-relevant
-# categories; skip spare-part feeds to stay on topic. Tune via env.
+# Products live under /shop/<category>/.../<slug>. The flat sitemap lists 91k
+# URLs, but ~66k are screw-compressor spare parts (zapchasti_*) and many are
+# regional-subdomain duplicates (rostov./etc.). Keep only the compressor
+# equipment subcategories under /shop/oborudovanie/, collapsing every regional
+# host to www so duplicates merge. This matches the site's own "Компрессоры"
+# count (~18.7k) instead of scraping spare parts and city mirrors.
 INCLUDE = ["/shop/"]
-EXCLUDE = ["ulyanovsk.", "/sitemap"]
+EXCLUDE = ["/sitemap"]
 MAX_URLS = int(os.getenv("PNEVMO_SKLAD_MAX", "0")) or None
+CANON_HOST = "https://www.pnevmo-sklad.ru"
+
+# Compressor-equipment subcategories under /shop/oborudovanie/ (air compressors,
+# air preparation, receivers, tools). Spare parts and off-topic gear (light
+# masts, nitrogen generators, sand-blasting) are excluded by omission.
+COMPRESSOR_SUBCATS = {
+    "vintovye_kompressory", "porshnevye_kompressory", "peredvizhnye_kompressory",
+    "spiralnye_kompressory", "czentrobezhnyie_kompressoryi",
+    "modulnyie_kompressornyie_stanczii", "osushiteli_vozduha",
+    "resivery_dlya_kompressorov_vozduhosborniki", "magistralnye_filtry",
+    "ciklonnye_separatory", "kondensatootvodchiki", "ochistka_kondensata",
+    "konczevie_ohladiteli", "chillery", "pnevmoinstrument",
+    "bu_oborudovanie", "snyatyie_s_proizvodstva",
+}
 
 
 class PnevmoSkladScraper(BaseScraper):
@@ -45,10 +64,32 @@ class PnevmoSkladScraper(BaseScraper):
         return ["__sitemap__"]
 
     def fetch_listing(self, url: str) -> list[str]:
-        urls = collect_product_urls(
-            self.client, SITEMAP, include=INCLUDE, exclude=EXCLUDE, max_urls=MAX_URLS
+        raw = collect_product_urls(
+            self.client, SITEMAP, include=INCLUDE, exclude=EXCLUDE, max_urls=None
         )
-        logger.info("[pnevmo-sklad] %d product URLs from sitemap", len(urls))
+        seen: set[str] = set()
+        urls: list[str] = []
+        for u in raw:
+            path = urllib.parse.urlparse(u).path
+            parts = path.strip("/").split("/")
+            # Expect /shop/oborudovanie/<subcat>/.../<slug> (>= 4 segments)
+            if len(parts) < 4 or parts[0] != "shop" or parts[1] != "oborudovanie":
+                continue
+            if parts[2] not in COMPRESSOR_SUBCATS:
+                continue
+            canon = CANON_HOST + path  # collapse regional hosts → www
+            if canon not in seen:
+                seen.add(canon)
+                urls.append(canon)
+        if os.getenv("SHUFFLE", "").strip() in ("1", "true", "yes"):
+            import random
+            random.shuffle(urls)
+        if MAX_URLS:
+            urls = urls[:MAX_URLS]
+        logger.info(
+            "[pnevmo-sklad] %d compressor URLs (from %d sitemap entries)",
+            len(urls), len(raw),
+        )
         return urls
 
     def parse_product(self, url: str) -> Optional[Product]:
