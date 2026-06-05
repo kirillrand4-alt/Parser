@@ -70,13 +70,29 @@ class VpkScraper(BaseScraper):
                             len(urls), start_page)
         seen: set[str] = set(urls)
 
+        # Per-page timeout: a slow/hung catalog page shouldn't eat 40s × retries.
+        # PAGEN timeouts on a single page are not fatal — log and move on rather
+        # than aborting the whole walk (a transient hiccup used to kill it).
+        page_timeout = int(os.getenv("VPK_PAGE_TIMEOUT", "15"))
+        persist_every = int(os.getenv("VPK_PERSIST_EVERY", "10"))
+        consecutive_fail = 0
         for page in range(start_page, MAX_PAGES + 1):
             page_url = CATEGORY if page == 1 else f"{CATEGORY}?PAGEN_1={page}"
             try:
-                resp = self.client.get(page_url, timeout=40)
+                resp = self.client.get(page_url, timeout=page_timeout)
             except Exception as exc:
-                logger.warning("[v-p-k] page %d fetch error: %s", page, exc)
-                break
+                consecutive_fail += 1
+                logger.warning("[v-p-k] page %d fetch error (%d in a row): %s",
+                               page, consecutive_fail, exc)
+                # Give up only after several pages fail back-to-back; a lone slow
+                # page shouldn't truncate the catalog. Save progress first.
+                self._persist_pages(page - 1, urls)
+                if consecutive_fail >= 3:
+                    logger.error("[v-p-k] %d pages failed in a row — stopping walk "
+                                 "at page %d (resume with RESUME=1)", consecutive_fail, page)
+                    break
+                continue
+            consecutive_fail = 0
             soup = BeautifulSoup(resp.content, "lxml")
             new = 0
             for a in soup.select("a[href*='/product/']"):
@@ -92,7 +108,7 @@ class VpkScraper(BaseScraper):
             # page that adds no new product link means we've reached the end.
             if new == 0:
                 break
-            if page % 25 == 0:
+            if page % persist_every == 0:
                 logger.info("[v-p-k] catalog page %d, %d URLs so far", page, len(urls))
                 self._persist_pages(page, urls)
         # Walk finished — drop the partial-progress keys so a later run doesn't
