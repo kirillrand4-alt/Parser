@@ -131,29 +131,34 @@ def extract_brand_from_name(name: str) -> str:
 def parse_spec_table(rows) -> tuple[dict, bool]:
     """Parse a list of <tr> elements into a specs dict.
 
-    Returns ``(specs, is_matrix)``. ``is_matrix`` is True when the table is a
+    Returns ``(specs, is_matrix)``. ``is_matrix`` is True only for a real
     multi-variant comparison matrix (a "series" page, e.g. one page covering a
-    whole CompAir L26 family with a column per sub-model). Our sites use strictly
-    2-column "label | value" tables, so a row with >= 3 cells signals a matrix;
-    when >= 2 such rows are found, the caller should skip the product.
+    whole CompAir L26 family with a column per sub-model). Such tables have a
+    label plus *several* variant columns, so a row with >= 4 non-empty cells is
+    the signal; when >= 2 such rows are found the caller should skip the product.
 
-    For a normal 2-column table the first cell is the key and the last the value.
+    Normal "label | value" tables (2 cells) and "label | value | unit" tables
+    (3 cells) are parsed: first non-empty cell is the key, the rest joined is the
+    value. Empty filler cells are ignored so they cannot be mistaken for columns.
     """
-    specs: dict = {}
-    wide_rows = 0
+    parsed: list[list[str]] = []
     for row in rows:
         cells = row.select("td, th")
-        if len(cells) >= 3:
-            wide_rows += 1
-            continue
-        if len(cells) >= 2:
-            k = collapse_ws(cells[0].get_text(" ", strip=True)).rstrip(":").strip()
-            v = collapse_ws(cells[-1].get_text(" ", strip=True))
-            if k and v:
-                specs[k] = v
-    is_matrix = wide_rows >= 2
-    if is_matrix:
+        texts = [collapse_ws(c.get_text(" ", strip=True)) for c in cells]
+        parsed.append([t for t in texts if t])  # keep only non-empty cells
+
+    # A comparison matrix has several variant columns: >= 4 non-empty cells in
+    # >= 2 rows. Ordinary 2-/3-column spec tables never reach this.
+    if sum(1 for r in parsed if len(r) >= 4) >= 2:
         return {}, True
+
+    specs: dict = {}
+    for r in parsed:
+        if len(r) >= 2:
+            k = r[0].rstrip(":").strip()
+            v = " ".join(r[1:])
+            if k and v and k != v:
+                specs[k] = v
     return specs, False
 
 
