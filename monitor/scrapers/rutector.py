@@ -65,7 +65,10 @@ class RutectorScraper(BaseScraper):
                 brand = specs[k]
                 break
         if not brand:
-            brand = self._breadcrumb_brand(soup)
+            # Product pages link to their brand page /brands/<slug>
+            a = soup.select_one("a[href*='/brands/']")
+            if a and a.get_text(strip=True):
+                brand = a.get_text(strip=True)
 
         sku = specs.get("Артикул", "") or specs.get("Код товара", "")
         model = sku or name
