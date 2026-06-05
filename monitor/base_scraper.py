@@ -37,6 +37,10 @@ class BaseScraper(ABC):
     site: str  # domain, e.g. "compressortyt.ru"
     base_url: str  # e.g. "https://compressortyt.ru"
 
+    # Shared across all scraper instances: SEED_DONE_CSV_DIR → {site: {urls}}.
+    # Parsed once per directory so 6 sites don't each re-read every CSV.
+    _seed_cache: dict = {}
+
     # Per-site polite delay between requests (seconds). Robust sites can set
     # these lower; sites behind anti-bot (ddos-guard) keep them higher.
     delay_min: float = 1.0
@@ -120,7 +124,17 @@ class BaseScraper(ABC):
             self._checkpoint["product_urls"] = product_urls
             self._save_progress(done_urls, failed_urls)
 
-        pending = [u for u in product_urls if u not in done_urls]
+        # SEED_DONE_CSV_DIR: skip any URL already present (for this site) in a
+        # previous run's CSV output. In-memory only — these are NOT written to
+        # the checkpoint, so the skip applies to this run only and prior price
+        # history is left untouched. Lets a run avoid re-scraping items already
+        # captured across many earlier runs.
+        seed_done = self._load_seed_done() if resume else set()
+        if seed_done:
+            logger.info("[%s] seeded %d done URLs from prior CSV output",
+                        self.site, len(seed_done))
+
+        pending = [u for u in product_urls if u not in done_urls and u not in seed_done]
         if resume and len(pending) < len(product_urls):
             logger.info("[%s] resume: skipping %d already-done URLs",
                         self.site, len(product_urls) - len(pending))
@@ -239,6 +253,42 @@ class BaseScraper(ABC):
     # ------------------------------------------------------------------
     # Checkpoint helpers
     # ------------------------------------------------------------------
+
+    def _load_seed_done(self) -> set[str]:
+        """Collect product URLs for this site from prior-run CSVs.
+
+        Controlled by the SEED_DONE_CSV_DIR env var (e.g. a Drive folder of
+        prices_*.csv). Returns a set used to skip already-captured URLs for the
+        current run only; never written back to the checkpoint. Cached per
+        directory so the 6 site scrapers don't each re-read every CSV.
+        """
+        import csv
+        import glob
+
+        seed_dir = os.getenv("SEED_DONE_CSV_DIR")
+        if not seed_dir or not os.path.isdir(seed_dir):
+            return set()
+
+        cache = BaseScraper._seed_cache
+        if seed_dir not in cache:
+            by_site: dict[str, set[str]] = {}
+            # CSV specs cells can be large; lift the field-size limit.
+            try:
+                csv.field_size_limit(2**24)
+            except Exception:
+                pass
+            for path in sorted(glob.glob(os.path.join(seed_dir, "*.csv"))):
+                try:
+                    with open(path, newline="", encoding="utf-8-sig") as f:
+                        for row in csv.DictReader(f):
+                            site = row.get("site")
+                            url = row.get("product_url")
+                            if site and url:
+                                by_site.setdefault(site, set()).add(url)
+                except Exception as exc:
+                    logger.warning("seed CSV read error %s: %s", path, exc)
+            cache[seed_dir] = by_site
+        return cache[seed_dir].get(self.site, set())
 
     def _load_checkpoint(self) -> dict:
         if self._checkpoint_path.exists():

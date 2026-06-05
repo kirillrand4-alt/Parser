@@ -116,7 +116,13 @@ class CompressortytScraper(BaseScraper):
             el = o.find("url")
             return (el.text or "").strip() if el is not None else ""
 
-        pending = [o for o in offers if offer_url(o) not in done_urls]
+        seed_done = self._load_seed_done() if resume else set()
+        if seed_done:
+            logger.info("[compressortyt] seeded %d done URLs from prior CSV output",
+                        len(seed_done))
+
+        pending = [o for o in offers
+                   if offer_url(o) not in done_urls and offer_url(o) not in seed_done]
         if resume and len(pending) < len(offers):
             logger.info("[compressortyt] resume: skipping %d already-done offers",
                         len(offers) - len(pending))
