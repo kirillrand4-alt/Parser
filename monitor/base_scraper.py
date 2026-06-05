@@ -56,7 +56,8 @@ class BaseScraper(ABC):
         delay_min = float(dmin) if dmin else self.delay_min
         delay_max = float(dmax) if dmax else self.delay_max
         self.client = HttpClient(self.site, delay_min=delay_min, delay_max=delay_max)
-        self._checkpoint_path = Path(f"cache/{self.site}.checkpoint.json")
+        checkpoint_dir = os.getenv("CHECKPOINT_DIR", "cache")
+        self._checkpoint_path = Path(checkpoint_dir) / f"{self.site}.checkpoint.json"
         self._checkpoint: dict = self._load_checkpoint()
 
     # ------------------------------------------------------------------
