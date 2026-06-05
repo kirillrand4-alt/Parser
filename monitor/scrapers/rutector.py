@@ -33,6 +33,13 @@ INCLUDE = ["/products/"]
 EXCLUDE = ["/sitemap"]
 MAX_URLS = int(os.getenv("RUTECTOR_MAX", "0")) or None
 
+# Filter by URL slug — rutector sells everything (23k items); keep only
+# compressor-related slugs. Generators, welding, water-lowering etc. are excluded.
+SLUG_KEYWORDS = (
+    "kompressor", "vintov", "porshnev", "pnevmo",
+    "resiver", "ressiver", "osushitel", "vozduh",
+)
+
 _BRAND_KEYS = ("Бренд", "Производитель", "Марка", "Торговая марка")
 
 
@@ -48,9 +55,12 @@ class RutectorScraper(BaseScraper):
 
     def fetch_listing(self, url: str) -> list[str]:
         urls = collect_product_urls(
-            self.client, SITEMAP, include=INCLUDE, exclude=EXCLUDE, max_urls=MAX_URLS
+            self.client, SITEMAP, include=INCLUDE, exclude=EXCLUDE, max_urls=None
         )
-        logger.info("[rutector] %d product URLs from sitemap", len(urls))
+        urls = [u for u in urls if any(k in u.lower() for k in SLUG_KEYWORDS)]
+        if MAX_URLS:
+            urls = urls[:MAX_URLS]
+        logger.info("[rutector] %d product URLs from sitemap (after slug filter)", len(urls))
         return urls
 
     def parse_product(self, url: str) -> Optional[Product]:

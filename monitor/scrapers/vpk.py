@@ -34,6 +34,13 @@ INCLUDE = ["/product/"]
 EXCLUDE = ["/sitemap"]
 MAX_URLS = int(os.getenv("VPK_MAX", "0")) or None
 
+# v-p-k sells 39k items (generators, welding, construction etc.); keep only
+# compressor-related slugs identified by URL keyword.
+SLUG_KEYWORDS = (
+    "kompressor", "vintov", "porshnev", "pnevmo",
+    "resiver", "ressiver", "osushitel", "vozduh",
+)
+
 _BRAND_KEYS = ("Бренд", "Производитель", "Марка", "Торговая марка")
 
 
@@ -49,9 +56,12 @@ class VpkScraper(BaseScraper):
 
     def fetch_listing(self, url: str) -> list[str]:
         urls = collect_product_urls(
-            self.client, SITEMAP, include=INCLUDE, exclude=EXCLUDE, max_urls=MAX_URLS
+            self.client, SITEMAP, include=INCLUDE, exclude=EXCLUDE, max_urls=None
         )
-        logger.info("[v-p-k] %d product URLs from sitemap", len(urls))
+        urls = [u for u in urls if any(k in u.lower() for k in SLUG_KEYWORDS)]
+        if MAX_URLS:
+            urls = urls[:MAX_URLS]
+        logger.info("[v-p-k] %d product URLs from sitemap (after slug filter)", len(urls))
         return urls
 
     def parse_product(self, url: str) -> Optional[Product]:
