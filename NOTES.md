@@ -24,6 +24,26 @@
 
 ---
 
+## РЕАЛИЗОВАНО — итоговые источники и селекторы (проверено в Colab)
+
+| Сайт | Discovery | Цена | Характеристики | Бренд |
+|---|---|---|---|---|
+| **compressortyt.ru** | YML `/yml/` (~15 853 оффера) | `<price>` в фиде | добор со страниц (`COMPRESSORTYT_ENRICH=1`) | `<vendor>` |
+| **pnevmo-sklad.ru** | sitemap.xml → `/shop/` | `.pricebox__price` | `table.charstable` (Бренд:/Артикул:/…) | из таблицы |
+| **pnevmoteh.ru** | sitemap `?page=N` → корневые слаги | `[itemprop=price]`/`.ui-price-price` | `dl.clearfix` (dt/dd) | H1 после `//` |
+| **rutector.ru** | sitemap-iblock-4.xml → `/products/` | `[itemprop=price]` (0=по запросу) | `table.zebra` | `/brands/` ссылка → словарь |
+| **v-p-k.ru** | sitemap-iblock-248.xml → `/product/` | `[itemprop=price]` (0=По запросу) | `.properties-group__item` | словарь по названию |
+| **aerocompressors.ru** | sitemap.xml → `/katalog_produkcii/` глубина ≥5 | `[itemprop=price]`/`.price` | `table.tech` | словарь по названию |
+
+### Особенности
+- **compressortyt**: фид даёт цены/бренд/категории; характеристик в фиде нет.
+- **pnevmoteh** (Drupal Commerce): товары и категории в корне; категории отсеиваются по отсутствию цены.
+- **rutector / v-p-k**: дорогая техника часто «по запросу» (цена 0) → статус «под заказ».
+- **aerocompressors**: категории имеют `itemprop=price` («от …»), но без `table.tech` → отсев по наличию характеристик; фраза «снято с производства» есть в меню каталога на всех страницах → статус «снято» определяем только по H1 товара.
+- Лимиты для тестов: `<SITE>_MAX=N` (напр. `RUTECTOR_MAX=30`).
+
+---
+
 > Историческая разметка ниже (гипотезы до разведки).
 
 ---
