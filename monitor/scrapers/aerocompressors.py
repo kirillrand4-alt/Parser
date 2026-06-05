@@ -32,7 +32,24 @@ INCLUDE = ["/katalog_produkcii/"]
 EXCLUDE = ["/sitemap"]
 MAX_URLS = int(os.getenv("AEROCOMPRESSORS_MAX", "0")) or None
 
+# Only scrape compressor-related categories; skip generators, construction
+# equipment, welding, sand-blasting, heat guns, and metalworking.
+RELEVANT_CATEGORIES = {
+    "kompressori",
+    "podgotovka-szhatogo-vozduha",
+    "pnevmoinstrument",
+    "resivers-vozduhozaborniki",
+}
+
 _BRAND_KEYS = ("Бренд", "Производитель", "Марка", "Торговая марка")
+
+
+def _top_category(url: str) -> str:
+    """Return the top-level category slug from a /katalog_produkcii/<cat>/... URL."""
+    import urllib.parse
+    parts = urllib.parse.urlparse(url).path.strip("/").split("/")
+    # parts[0] == "katalog_produkcii", parts[1] == top category
+    return parts[1] if len(parts) > 1 else ""
 
 
 class AerocompressorsScraper(BaseScraper):
@@ -53,6 +70,13 @@ class AerocompressorsScraper(BaseScraper):
             self.client, SITEMAP, include=INCLUDE, exclude=EXCLUDE, max_urls=None
         )
         urls = [u for u in urls if u.rstrip("/").count("/") - 2 >= 5]
+        # Keep only URLs whose second path segment (the top-level category) is
+        # in RELEVANT_CATEGORIES.  URL shape:
+        #   /katalog_produkcii/<category>/[sub/...]/<slug>
+        urls = [
+            u for u in urls
+            if _top_category(u) in RELEVANT_CATEGORIES
+        ]
         if MAX_URLS:
             urls = urls[:MAX_URLS]
         logger.info("[aerocompressors] %d product URLs from sitemap", len(urls))
