@@ -77,8 +77,9 @@ class RutectorScraper(BaseScraper):
         specs, is_matrix = self._extract_specs(soup)
         if is_matrix:
             return None  # multi-variant series page — skip
-        if not specs:
-            return None  # series/landing page without a characteristics table
+        # Keep products even without a spec table (parts/accessories are still
+        # relevant for price monitoring); only true comparison matrices are
+        # dropped above.
 
         brand = ""
         for k in _BRAND_KEYS:
