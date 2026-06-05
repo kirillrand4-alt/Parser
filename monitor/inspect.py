@@ -20,8 +20,8 @@ SITE_SITEMAP: dict[str, dict] = {
         "include": ["/shop/"], "exclude": ["ulyanovsk.", "/sitemap"],
     },
     "pnevmoteh.ru": {
-        "sitemap": "https://pnevmoteh.ru/sitemap.xml",
-        "include": ["/catalog/", "/product/", "/shop/"], "exclude": ["/sitemap"],
+        "sitemap": "https://www.pnevmoteh.ru/sitemap.xml",
+        "include": [], "exclude": ["sitemap", "?", "/user", "/cart", "/search"],
     },
     "rutector.ru": {
         "sitemap": "https://rutector.ru/sitemap.xml",
