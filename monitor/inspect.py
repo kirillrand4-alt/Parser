@@ -33,7 +33,7 @@ SITE_SITEMAP: dict[str, dict] = {
     },
     "aerocompressors.ru": {
         "sitemap": "https://aerocompressors.ru/sitemap.xml",
-        "include": ["/catalog/", "/product/"], "exclude": ["/sitemap"],
+        "include": ["/katalog_produkcii/"], "exclude": ["/sitemap"],
     },
 }
 

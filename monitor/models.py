@@ -99,6 +99,7 @@ KNOWN_BRANDS = [
     "Mattei", "Boge", "Kaeser", "Almig", "Quincy",
     "Sullair", "Rotorcomp", "Fini", "Mainpack", "For-Est", "Megapromtech",
     "Scheppach", "Кратон", "Зубр", "Вектор", "Беламос", "Калибр",
+    "Ariacom", "Comaro", "Dali", "Berg", "Voltel", "DENAIR",
 ]
 _BRANDS_SORTED = sorted(KNOWN_BRANDS, key=len, reverse=True)
 
