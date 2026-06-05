@@ -25,10 +25,14 @@ CSV_BASE = DATA_DIR / "prices"
 
 def setup_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.INFO
+    # force=True replaces any handler a host environment (e.g. Colab/Jupyter)
+    # already installed on the root logger; without it basicConfig is a no-op
+    # there and our INFO lines stay hidden behind the host's WARNING-level setup.
     logging.basicConfig(
         level=level,
         format="%(message)s",
         handlers=[RichHandler(console=console, rich_tracebacks=True)],
+        force=True,
     )
     # Silence noisy libraries
     for lib in ("requests", "urllib3", "charset_normalizer",
