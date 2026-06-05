@@ -28,8 +28,8 @@ SITE_SITEMAP: dict[str, dict] = {
         "include": ["/products/"], "exclude": ["/sitemap"],
     },
     "v-p-k.ru": {
-        "sitemap": "https://v-p-k.ru/sitemap.xml",
-        "include": ["/catalog/", "/product/"], "exclude": ["/sitemap"],
+        "sitemap": "https://www.v-p-k.ru/sitemap-iblock-248.xml",
+        "include": ["/product/"], "exclude": ["/sitemap"],
     },
     "aerocompressors.ru": {
         "sitemap": "https://aerocompressors.ru/sitemap.xml",

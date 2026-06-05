@@ -1,37 +1,40 @@
 """Scraper for v-p-k.ru (Вентиляция-Пневматика-Компрессоры).
 
-Engine: likely 1С-Битрикс.
-Source: HTML listing + JSON XHR probe (Bitrix sometimes exposes /bitrix/components/.../result.php).
+Engine: 1С-Битрикс (Sotbit/Aspro template).
+Source: sitemap-iblock-248.xml → products at /product/<slug>/ (categories live
+under /catalog/ and are excluded).
+
+Markup:
+- specs:        .properties-group__item (name .properties-group__name,
+                value .properties-group__value)
+- price:        [itemprop=price] content (0 / "По запросу" → None)
+- availability: .item-stock
+- brand:        specs "Бренд"/"Производитель" → known-brand match on name
 """
 from __future__ import annotations
 
-import json
 import logging
-import re
+import os
 from typing import Optional
 
 from bs4 import BeautifulSoup
 
 from ..base_scraper import BaseScraper
-from ..models import Product, clean_price, detect_series_status
+from ..models import (
+    Product, clean_price, has_discontinued_signal, status_from_availability,
+    extract_brand_from_name,
+)
+from ..sitemap import collect_product_urls
 
 logger = logging.getLogger(__name__)
 
-BASE = "https://v-p-k.ru"
+BASE = "https://www.v-p-k.ru"
+SITEMAP = "https://www.v-p-k.ru/sitemap-iblock-248.xml"
+INCLUDE = ["/product/"]
+EXCLUDE = ["/sitemap"]
+MAX_URLS = int(os.getenv("VPK_MAX", "0")) or None
 
-CATEGORIES = [
-    "/catalog/kompressory/",
-    "/catalog/kompressory/vintovye/",
-    "/catalog/kompressory/porshnevye/",
-    "/catalog/kompressory/bezmaslyane/",
-    "/catalog/pnevmatika/",
-]
-
-# Bitrix AJAX endpoint pattern (varies by site setup)
-AJAX_ENDPOINTS = [
-    "/ajax/catalog/",
-    "/bitrix/components/bitrix/catalog/",
-]
+_BRAND_KEYS = ("Бренд", "Производитель", "Марка", "Торговая марка")
 
 
 class VpkScraper(BaseScraper):
@@ -39,151 +42,96 @@ class VpkScraper(BaseScraper):
     base_url = BASE
 
     def discover(self) -> list[str]:
-        return [BASE + cat for cat in CATEGORIES]
+        return ["__sitemap__"]
 
     def fetch_listing(self, url: str) -> list[str]:
-        """Try JSON XHR first, fall back to HTML."""
-        product_urls: list[str] = []
-        page = 1
-
-        while True:
-            paged = url if page == 1 else f"{url}?PAGEN_1={page}"
-            try:
-                resp = self.client.get(paged)
-            except Exception as exc:
-                logger.warning("[v-p-k] listing error %s: %s", paged, exc)
-                break
-
-            # Try to detect JSON response
-            ct = resp.headers.get("Content-Type", "")
-            if "json" in ct:
-                data = resp.json()
-                items = data.get("items") or data.get("products") or []
-                for item in items:
-                    u = item.get("url") or item.get("detail_page_url", "")
-                    if u:
-                        product_urls.append(u if u.startswith("http") else BASE + u)
-                if not items:
-                    break
-                page += 1
-                continue
-
-            soup = BeautifulSoup(resp.content, "lxml")
-            links = soup.select(
-                ".catalog-item a.catalog-item-title, "
-                ".bx-catalog a[href*='/catalog/'], "
-                ".catalog-item a, "
-                "a.product-title[href*='/catalog/']"
-            )
-            found = 0
-            for a in links:
-                href = a.get("href", "")
-                if href and "/catalog/" in href and href.count("/") >= 4:
-                    product_urls.append(href if href.startswith("http") else BASE + href)
-                    found += 1
-
-            if found == 0:
-                break
-            if not soup.select_one(f"a[href*='PAGEN_1={page + 1}']"):
-                break
-            page += 1
-
-        return list(dict.fromkeys(product_urls))
+        urls = collect_product_urls(
+            self.client, SITEMAP, include=INCLUDE, exclude=EXCLUDE, max_urls=MAX_URLS
+        )
+        logger.info("[v-p-k] %d product URLs from sitemap", len(urls))
+        return urls
 
     def parse_product(self, url: str) -> Optional[Product]:
         resp = self.client.get(url)
         soup = BeautifulSoup(resp.content, "lxml")
         page_text = soup.get_text(" ", strip=True)
 
-        name = self._text(soup, "h1") or ""
-        brand = (
-            self._text(soup, "[itemprop='brand']")
-            or self._text(soup, ".vendor-name, .manufacturer")
-            or self._breadcrumb_part(soup, -2)
-        )
-        model = self._text(soup, "[itemprop='model'], .product-model") or name
-        sku = self._text(soup, "[itemprop='sku'], .article")
+        h1 = soup.select_one("h1")
+        name = h1.get_text(" ", strip=True) if h1 else ""
 
-        price = self._price(soup, "[itemprop='price'], .price, .cost")
-        old_price = self._price(soup, ".price-old, .old-price")
+        specs = self._extract_specs(soup)
+
+        brand = ""
+        for k in _BRAND_KEYS:
+            if specs.get(k):
+                brand = specs[k]
+                break
+        if not brand:
+            brand = extract_brand_from_name(name)
+
+        price = self._price(soup)
+        old_price = self._old_price(soup)
         discount_pct = None
         if price and old_price and old_price > price:
             discount_pct = round((old_price - price) / old_price * 100, 1)
 
-        avail_el = soup.select_one("[itemprop='availability'], .availability, .in-stock-status")
-        availability = avail_el.get_text(strip=True) if avail_el else ""
-        series_status = detect_series_status(page_text)
+        av = soup.select_one(".item-stock, [class*='item-stock']")
+        availability = av.get_text(" ", strip=True) if av else ""
+        series_status = status_from_availability(availability)
         if series_status == "неизвестно":
-            low = availability.lower()
-            if "в наличии" in low:
-                series_status = "в наличии"
-            elif "под заказ" in low:
-                series_status = "под заказ"
+            series_status = "под заказ" if "заказ" in availability.lower() else (
+                "в наличии" if price else "неизвестно")
+        if has_discontinued_signal(page_text):
+            series_status = "снято"
 
-        replacement_model = self._get_replacement(soup)
-        specs = self._extract_specs(soup)
-        cat_path = " > ".join(
-            i.get_text(strip=True)
-            for i in soup.select(".breadcrumb li, nav[aria-label] li")
-            if i.get_text(strip=True)
-        )
+        category_path = self._breadcrumb(soup)
         image_url = self._image(soup)
 
         return Product(
-            site=self.site, brand=brand, name=name, model=model, sku=sku,
+            site=self.site, brand=brand, name=name, model=name,
             price=price, old_price=old_price, discount_pct=discount_pct,
             availability=availability, series_status=series_status,
-            replacement_model=replacement_model, specs=specs,
-            category_path=cat_path, product_url=url, image_url=image_url,
+            specs=specs, category_path=category_path,
+            product_url=url, image_url=image_url,
         )
 
     # ------------------------------------------------------------------
 
-    def _text(self, soup: BeautifulSoup, sel: str) -> str:
-        el = soup.select_one(sel)
-        return el.get_text(strip=True) if el else ""
-
-    def _price(self, soup: BeautifulSoup, sel: str) -> float | None:
-        el = soup.select_one(sel)
-        if not el:
-            return None
-        return clean_price(el.get("content") or el.get_text())
-
-    def _breadcrumb_part(self, soup: BeautifulSoup, idx: int) -> str:
-        items = [i.get_text(strip=True) for i in soup.select(".breadcrumb li") if i.get_text(strip=True)]
-        try:
-            return items[idx]
-        except IndexError:
-            return ""
-
     def _extract_specs(self, soup: BeautifulSoup) -> dict:
         specs: dict = {}
-        for row in soup.select(".properties-table tr, .chars-table tr, table.product-props tr"):
-            cells = row.select("td, th")
-            if len(cells) >= 2:
-                k = cells[0].get_text(strip=True)
-                v = cells[-1].get_text(strip=True)
-                if k and v:
+        for item in soup.select(".properties-group__item"):
+            name_el = item.select_one(".properties-group__name")
+            val_el = item.select_one(".properties-group__value")
+            if name_el and val_el:
+                k = name_el.get_text(" ", strip=True).rstrip(":").strip()
+                v = val_el.get_text(" ", strip=True)
+                if k and v and k not in specs:
                     specs[k] = v
-        if not specs:
-            for dl in soup.select("dl"):
-                for dt, dd in zip(dl.select("dt"), dl.select("dd")):
-                    specs[dt.get_text(strip=True)] = dd.get_text(strip=True)
         return specs
 
+    def _price(self, soup: BeautifulSoup) -> float | None:
+        el = soup.select_one("[itemprop='price']")
+        if el:
+            p = clean_price(el.get("content") or el.get_text())
+            if p:
+                return p
+        el = soup.select_one(".price.font-bold, .cost .price")
+        if el:
+            return clean_price(el.get_text())
+        return None
+
+    def _old_price(self, soup: BeautifulSoup) -> float | None:
+        el = soup.select_one(".price-old, .old-price, [class*='old_price']")
+        return clean_price(el.get_text()) if el else None
+
+    def _breadcrumb(self, soup: BeautifulSoup) -> str:
+        items = soup.select(".breadcrumbs a, .breadcrumb a, [itemprop='itemListElement'] [itemprop='name']")
+        return " > ".join(i.get_text(strip=True) for i in items if i.get_text(strip=True))
+
     def _image(self, soup: BeautifulSoup) -> str:
-        img = soup.select_one("[itemprop='image'], .product-img img, .detail-picture img")
+        img = soup.select_one("[itemprop='image'], .product-detail-gallery img, .detail-picture img")
         if img:
-            src = img.get("data-src") or img.get("src", "")
+            src = img.get("data-src") or img.get("content") or img.get("src", "")
             if src:
                 return src if src.startswith("http") else BASE + src
-        return ""
-
-    def _get_replacement(self, soup: BeautifulSoup) -> str:
-        for el in soup.select("p, .note, div.replacement"):
-            text = el.get_text(strip=True)
-            if any(k in text.lower() for k in ("аналог", "замена", "заменяет", "заменён")):
-                m = re.search(r"[A-ZА-Я][\w\-]{3,}", text)
-                if m:
-                    return m.group(0)
         return ""
