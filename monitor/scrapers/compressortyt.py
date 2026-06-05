@@ -105,16 +105,36 @@ class CompressortytScraper(BaseScraper):
             offers = offers[:MAX_OFFERS]
         logger.info("[compressortyt] %d offers in feed", len(offers))
 
+        # Resume support: like the base scraper, RESUME=1 skips offers already
+        # parsed in a previous run (tracked by product URL in the checkpoint) so
+        # this fast feed-based site doesn't re-do its whole catalog every run.
+        resume = os.getenv("RESUME", "").strip().lower() in ("1", "true", "yes")
+        done_urls: set[str] = set(self._checkpoint.get("done_urls", [])) if resume else set()
+        failed_urls: set[str] = set(self._checkpoint.get("failed_urls", [])) if resume else set()
+
+        def offer_url(o) -> str:
+            el = o.find("url")
+            return (el.text or "").strip() if el is not None else ""
+
+        pending = [o for o in offers if offer_url(o) not in done_urls]
+        if resume and len(pending) < len(offers):
+            logger.info("[compressortyt] resume: skipping %d already-done offers",
+                        len(offers) - len(pending))
+
         errors = 0
-        bar = tqdm(total=len(offers), desc=f"{'compressortyt.ru':<20}", position=position,
+        i = 0
+        bar = tqdm(total=len(pending), desc=f"{'compressortyt.ru':<20}", position=position,
                    unit="prod", leave=True, dynamic_ncols=True)
         try:
-            for offer in offers:
+            for offer in pending:
+                url = offer_url(offer)
                 try:
                     product = self._offer_to_product(offer, cat_path)
                 except Exception as exc:
                     logger.debug("[compressortyt] offer error: %s", exc)
                     errors += 1
+                    if url:
+                        failed_urls.add(url)
                     bar.update(1)
                     bar.set_postfix(err=errors, refresh=False)
                     continue
@@ -123,11 +143,18 @@ class CompressortytScraper(BaseScraper):
                         self._enrich(product)
                     except Exception as exc:
                         logger.debug("[compressortyt] enrich error %s: %s", product.product_url, exc)
+                if url:
+                    done_urls.add(url)
+                    failed_urls.discard(url)
                 bar.update(1)
                 bar.set_postfix(err=errors, refresh=False)
+                i += 1
+                if i % 100 == 0:
+                    self._save_progress(done_urls, failed_urls)
                 yield product
         finally:
             bar.close()
+            self._save_progress(done_urls, failed_urls)
 
     def _offer_to_product(self, offer: ET.Element, cat_path) -> Product:
         def t(tag: str) -> str:
