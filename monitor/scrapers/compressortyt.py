@@ -27,6 +27,8 @@ YML_URL = "https://compressortyt.ru/yml/"
 # Enrich each product with full specs from its HTML page.
 # Costs ~17k extra requests; off by default. Enable via COMPRESSORTYT_ENRICH=1.
 ENRICH_SPECS = os.getenv("COMPRESSORTYT_ENRICH", "0") == "1"
+# Cap offers parsed from the feed (0 = all). Useful for test runs.
+MAX_OFFERS = int(os.getenv("COMPRESSORTYT_MAX", "0")) or None
 
 # Leaf category slugs to crawl (avoids the huge root /stanciya/kompr/ page)
 CATEGORIES = [
@@ -84,6 +86,8 @@ class CompressortytScraper(BaseScraper):
             return " > ".join(reversed(parts))
 
         offers = shop.findall(".//offer")
+        if MAX_OFFERS:
+            offers = offers[:MAX_OFFERS]
         logger.info("[compressortyt] %d offers in feed", len(offers))
 
         for offer in offers:
