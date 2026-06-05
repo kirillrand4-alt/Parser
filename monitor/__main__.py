@@ -71,7 +71,7 @@ def scrape_cmd(site: str, out: str | None, db: str, parallel: bool, verbose: boo
     console.print(f"Output CSV: {csv_path}")
     console.print(f"Database:   {db}\n")
 
-    def run_one(site_name: str, storage: Storage) -> int:
+    def run_one(site_name: str, storage: Storage, position: int = 0) -> int:
         """Scrape a single site into shared storage. Returns product count."""
         try:
             scraper = get_scraper(site_name)
@@ -80,7 +80,7 @@ def scrape_cmd(site: str, out: str | None, db: str, parallel: bool, verbose: boo
             return 0
         count = 0
         try:
-            for product in scraper.scrape():
+            for product in scraper.scrape(position=position):
                 storage.write(product)
                 count += 1
         except Exception as exc:
@@ -96,7 +96,10 @@ def scrape_cmd(site: str, out: str | None, db: str, parallel: bool, verbose: boo
         if use_parallel:
             from concurrent.futures import ThreadPoolExecutor, as_completed
             with ThreadPoolExecutor(max_workers=len(scrapers_to_run)) as pool:
-                futures = {pool.submit(run_one, s, storage): s for s in scrapers_to_run}
+                futures = {
+                    pool.submit(run_one, s, storage, pos): s
+                    for pos, s in enumerate(scrapers_to_run)
+                }
                 for fut in as_completed(futures):
                     total_written += fut.result()
         else:

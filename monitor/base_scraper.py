@@ -8,10 +8,27 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Iterator
 
+import requests
+
+try:
+    from tqdm.auto import tqdm
+except Exception:  # tqdm optional — degrade to a no-op wrapper
+    def tqdm(iterable=None, **_):  # type: ignore
+        return iterable if iterable is not None else iter(())
+
 from .http_client import HttpClient
 from .models import Product
 
 logger = logging.getLogger(__name__)
+
+# HTTP statuses that signal anti-bot blocking / rate-limiting rather than a
+# genuine "page not found". Used to detect when a site starts pushing back.
+BLOCK_STATUSES = {403, 429, 503}
+
+# Abort a site after this many *consecutive* blocked responses — there is no
+# point hammering a host that is rejecting us. Progress is saved so a later
+# run (e.g. once proxies are configured) resumes from exactly here.
+MAX_CONSECUTIVE_BLOCKS = int(os.getenv("MAX_CONSECUTIVE_BLOCKS", "12"))
 
 
 class BaseScraper(ABC):
@@ -57,35 +74,99 @@ class BaseScraper(ABC):
         """Fetch and parse a single product page. Return None on skip."""
         ...
 
-    def scrape(self) -> Iterator[Product]:
+    def scrape(self, position: int = 0) -> Iterator[Product]:
         """Main entry point: discover → fetch listings → parse products.
 
         A fresh run re-scrapes every product (a price monitor wants current
         prices each time); the HTTP cache — not the checkpoint — protects the
-        site from repeated load. The checkpoint only dedups within a single run.
-        """
-        seen_urls: set[str] = set()
+        site from repeated load.
 
+        Progress is tracked in a per-site checkpoint (``done_urls`` /
+        ``failed_urls``). With ``RESUME=1`` set, URLs already in ``done_urls``
+        are skipped, so a run interrupted by blocking (or one re-launched once
+        proxies are configured) picks up exactly where it left off and retries
+        the URLs that failed.
+
+        A live tqdm progress bar shows parsed / errors / blocked counts.
+        ``position`` lets concurrent site bars stack without overwriting.
+        """
+        resume = os.getenv("RESUME", "").strip().lower() in ("1", "true", "yes")
+        done_urls: set[str] = set(self._checkpoint.get("done_urls", [])) if resume else set()
+        failed_urls: set[str] = set(self._checkpoint.get("failed_urls", [])) if resume else set()
+
+        # 1) Build the full work list first so the bar has a real total.
         category_urls = self.discover()
         logger.info("[%s] %d categories to crawl", self.site, len(category_urls))
 
+        product_urls: list[str] = []
+        seen: set[str] = set()
         for cat_url in category_urls:
             try:
-                product_urls = self.fetch_listing(cat_url)
+                for u in self.fetch_listing(cat_url):
+                    if u not in seen:
+                        seen.add(u)
+                        product_urls.append(u)
             except Exception as exc:
                 logger.warning("[%s] listing error %s: %s", self.site, cat_url, exc)
-                continue
 
-            for prod_url in product_urls:
-                if prod_url in seen_urls:  # de-dup within this run only
-                    continue
-                seen_urls.add(prod_url)
+        pending = [u for u in product_urls if u not in done_urls]
+        if resume and len(pending) < len(product_urls):
+            logger.info("[%s] resume: skipping %d already-done URLs",
+                        self.site, len(product_urls) - len(pending))
+
+        # 2) Parse each product, tracking errors and blocking.
+        errors = 0
+        blocked = 0
+        consecutive_blocks = 0
+        bar = tqdm(total=len(pending), desc=f"{self.site:<20}", position=position,
+                   unit="prod", leave=True, dynamic_ncols=True)
+
+        try:
+            for i, prod_url in enumerate(pending, 1):
                 try:
                     product = self.parse_product(prod_url)
+                    done_urls.add(prod_url)
+                    failed_urls.discard(prod_url)
+                    consecutive_blocks = 0
                     if product:
                         yield product
+                except requests.HTTPError as exc:
+                    status = getattr(exc.response, "status_code", None)
+                    failed_urls.add(prod_url)
+                    if status in BLOCK_STATUSES:
+                        blocked += 1
+                        consecutive_blocks += 1
+                        logger.warning("[%s] BLOCKED %s on %s", self.site, status, prod_url)
+                        if consecutive_blocks >= MAX_CONSECUTIVE_BLOCKS:
+                            logger.error(
+                                "[%s] %d consecutive blocks — stopping. "
+                                "Re-run with RESUME=1 (and proxies) to continue.",
+                                self.site, consecutive_blocks)
+                            break
+                    else:
+                        errors += 1
+                        logger.warning("[%s] HTTP %s on %s", self.site, status, prod_url)
+                except (requests.ConnectionError, requests.Timeout) as exc:
+                    errors += 1
+                    failed_urls.add(prod_url)
+                    logger.warning("[%s] network error %s: %s", self.site, prod_url, exc)
                 except Exception as exc:
+                    errors += 1
+                    failed_urls.add(prod_url)
                     logger.warning("[%s] product error %s: %s", self.site, prod_url, exc)
+
+                bar.update(1)
+                bar.set_postfix(err=errors, blocked=blocked, refresh=False)
+
+                # Persist progress periodically so a crash/kill loses little.
+                if i % 25 == 0:
+                    self._save_progress(done_urls, failed_urls)
+        finally:
+            bar.close()
+            self._save_progress(done_urls, failed_urls)
+            if blocked:
+                logger.warning("[%s] finished with %d blocked, %d other errors",
+                               self.site, blocked, errors)
 
     # ------------------------------------------------------------------
     # Checkpoint helpers
@@ -102,6 +183,19 @@ class BaseScraper(ABC):
     def _save_checkpoint(self, done_urls: set[str]) -> None:
         self._checkpoint["done_urls"] = list(done_urls)
         self._checkpoint_path.write_text(json.dumps(self._checkpoint))
+
+    def _save_progress(self, done_urls: set[str], failed_urls: set[str]) -> None:
+        """Persist resume index: successfully parsed and failed URLs.
+
+        ``failed_urls`` is what a proxy-enabled re-run (RESUME=1) should retry;
+        ``done_urls`` is skipped on resume.
+        """
+        self._checkpoint["done_urls"] = sorted(done_urls)
+        self._checkpoint["failed_urls"] = sorted(failed_urls)
+        self._checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self._checkpoint_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(self._checkpoint, ensure_ascii=False))
+        tmp.replace(self._checkpoint_path)
 
     def close(self) -> None:
         self.client.close()
