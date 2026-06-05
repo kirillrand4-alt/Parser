@@ -57,8 +57,8 @@ class AerocompressorsScraper(BaseScraper):
     base_url = BASE
 
     # ddos-guard: keep a gentle cadence
-    delay_min = 1.5
-    delay_max = 3.0
+    delay_min = 0.8
+    delay_max = 1.2
 
     def discover(self) -> list[str]:
         return ["__sitemap__"]
