@@ -54,26 +54,33 @@ class PnevmoSkladScraper(BaseScraper):
         if h1:
             name = h1.get_text(strip=True)
 
-        # Brand from breadcrumb or itemprop
-        brand = self._get_text(soup, "[itemprop='brand']") or self._breadcrumb_brand(soup)
-        model = self._get_text(soup, "[itemprop='model'], .product-article span") or name
+        # Characteristics table: <tr> with "Label:" | "Value"
+        specs = self._extract_specs(soup)
 
-        price = self._get_price(soup, ".price, .cost, [itemprop='price']")
-        old_price = self._get_price(soup, ".price-old, .old-price, .strike")
+        # Brand and article come straight from the chars table
+        brand = specs.get("Бренд", "") or specs.get("Производитель", "")
+        sku = specs.get("Артикул", "")
+        model = sku or name
+
+        # Price: .pricebox__price holds the number, or "Цена по запросу" → None
+        price = self._get_price(soup, ".pricebox__price, .prodsticky__price")
+        old_price = self._get_price(soup, ".pricebox__oldprice, .price-old")
         discount_pct = self._calc_discount(price, old_price)
 
-        availability_el = soup.select_one(".availability, .product-quantity, [itemprop='availability']")
-        availability = availability_el.get_text(strip=True) if availability_el else ""
+        availability_el = soup.select_one(".pricebox__instock, .ltprod__instock, .prodbig__instock")
+        availability = availability_el.get_text(" ", strip=True) if availability_el else ""
         series_status = detect_series_status(page_text)
-        if series_status == "неизвестно" and availability:
+        if series_status == "неизвестно":
             lower = availability.lower()
             if "в наличии" in lower or "есть" in lower:
                 series_status = "в наличии"
+            elif "под заказ" in lower:
+                series_status = "под заказ"
+            elif "нет" in lower:
+                series_status = "нет в наличии"
 
-        specs = self._extract_specs(soup)
         category_path = self._breadcrumb(soup)
         image_url = self._get_image(soup)
-        sku = self._get_text(soup, ".article, [itemprop='sku'], .product-art span") or ""
         replacement_model = self._get_replacement(soup)
 
         return Product(
@@ -126,20 +133,12 @@ class PnevmoSkladScraper(BaseScraper):
 
     def _extract_specs(self, soup: BeautifulSoup) -> dict:
         specs: dict = {}
-        for row in soup.select(".props-table tr, table.chars tr, .properties tr, .product-props tr"):
+        # Full characteristics table is .charstable (also .prodbig__chars-table teaser)
+        for row in soup.select("table.charstable tr, .prodbig__chars-table tr"):
             cells = row.select("td, th")
             if len(cells) >= 2:
-                k = cells[0].get_text(strip=True)
-                v = cells[-1].get_text(strip=True)
-                if k and v:
-                    specs[k] = v
-        if not specs:
-            for dt, dd in zip(
-                soup.select(".props-list dt, dl dt"),
-                soup.select(".props-list dd, dl dd"),
-            ):
-                k = dt.get_text(strip=True)
-                v = dd.get_text(strip=True)
+                k = cells[0].get_text(" ", strip=True).rstrip(":").strip()
+                v = cells[-1].get_text(" ", strip=True)
                 if k and v:
                     specs[k] = v
         return specs
