@@ -39,11 +39,9 @@ class AerocompressorsScraper(BaseScraper):
     site = "aerocompressors.ru"
     base_url = BASE
 
-    def __init__(self) -> None:
-        super().__init__()
-        # ddos-guard: be gentler than the default cadence
-        self.client.delay_min = 1.5
-        self.client.delay_max = 3.0
+    # ddos-guard: keep a gentle cadence
+    delay_min = 1.5
+    delay_max = 3.0
 
     def discover(self) -> list[str]:
         return ["__sitemap__"]

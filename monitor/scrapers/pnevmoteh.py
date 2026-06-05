@@ -39,6 +39,9 @@ MAX_URLS = int(os.getenv("PNEVMOTEH_MAX", "0")) or None
 class PnevmotehScraper(BaseScraper):
     site = "pnevmoteh.ru"
     base_url = BASE
+    # Robust nginx/openresty host — can take a faster cadence
+    delay_min = 0.4
+    delay_max = 0.9
 
     def discover(self) -> list[str]:
         return ["__sitemap__"]

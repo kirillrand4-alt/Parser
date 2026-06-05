@@ -50,6 +50,9 @@ _IMG_PLACEHOLDER = "ll.png"
 class CompressortytScraper(BaseScraper):
     site = "compressortyt.ru"
     base_url = BASE
+    # Robust nginx host — faster cadence (matters in enrich mode, ~15k pages)
+    delay_min = 0.4
+    delay_max = 0.9
 
     def discover(self) -> list[str]:
         return [BASE + cat for cat in CATEGORIES]

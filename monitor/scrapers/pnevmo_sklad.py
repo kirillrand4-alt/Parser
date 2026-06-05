@@ -35,6 +35,9 @@ MAX_URLS = int(os.getenv("PNEVMO_SKLAD_MAX", "0")) or None
 class PnevmoSkladScraper(BaseScraper):
     site = "pnevmo-sklad.ru"
     base_url = BASE
+    # Robust nginx/openresty host — can take a faster cadence
+    delay_min = 0.4
+    delay_max = 0.9
 
     def discover(self) -> list[str]:
         # Single sentinel; product URLs come from the sitemap in fetch_listing.

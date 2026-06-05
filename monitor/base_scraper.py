@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -19,8 +20,21 @@ class BaseScraper(ABC):
     site: str  # domain, e.g. "compressortyt.ru"
     base_url: str  # e.g. "https://compressortyt.ru"
 
+    # Per-site polite delay between requests (seconds). Robust sites can set
+    # these lower; sites behind anti-bot (ddos-guard) keep them higher.
+    delay_min: float = 1.0
+    delay_max: float = 2.5
+
     def __init__(self) -> None:
-        self.client = HttpClient(self.site)
+        # Global env override lets you tune requests/sec without code changes:
+        #   DELAY_MIN / DELAY_MAX (seconds), or per-site
+        #   DELAY_MIN__<SITE> / DELAY_MAX__<SITE> (dots/dashes → underscores).
+        key = self.site.replace(".", "_").replace("-", "_").upper()
+        dmin = os.getenv(f"DELAY_MIN__{key}") or os.getenv("DELAY_MIN")
+        dmax = os.getenv(f"DELAY_MAX__{key}") or os.getenv("DELAY_MAX")
+        delay_min = float(dmin) if dmin else self.delay_min
+        delay_max = float(dmax) if dmax else self.delay_max
+        self.client = HttpClient(self.site, delay_min=delay_min, delay_max=delay_max)
         self._checkpoint_path = Path(f"cache/{self.site}.checkpoint.json")
         self._checkpoint: dict = self._load_checkpoint()
 
