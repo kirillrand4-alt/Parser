@@ -46,8 +46,10 @@ def cli() -> None:
               help="Site to scrape: 'all' or domain name.")
 @click.option("--out", default=None, help="CSV output path (default: data/prices_<run_id>.csv)")
 @click.option("--db", default=str(DB_PATH), show_default=True, help="SQLite database path.")
+@click.option("--parallel/--sequential", default=True, show_default=True,
+              help="Scrape sites concurrently (one thread per site, each keeps its own delay).")
 @click.option("--verbose", "-v", is_flag=True)
-def scrape_cmd(site: str, out: str | None, db: str, verbose: bool) -> None:
+def scrape_cmd(site: str, out: str | None, db: str, parallel: bool, verbose: bool) -> None:
     """Scrape one or all competitor sites."""
     setup_logging(verbose)
     run_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -61,44 +63,46 @@ def scrape_cmd(site: str, out: str | None, db: str, verbose: bool) -> None:
             sys.exit(1)
         scrapers_to_run = [site]
 
+    use_parallel = parallel and len(scrapers_to_run) > 1
+
     console.rule(f"[bold green]Run {run_id}")
     console.print(f"Sites: {scrapers_to_run}")
+    console.print(f"Mode: {'parallel' if use_parallel else 'sequential'}")
     console.print(f"Output CSV: {csv_path}")
     console.print(f"Database:   {db}\n")
 
+    def run_one(site_name: str, storage: Storage) -> int:
+        """Scrape a single site into shared storage. Returns product count."""
+        try:
+            scraper = get_scraper(site_name)
+        except Exception as exc:
+            console.print(f"[red]Failed to init scraper for {site_name}: {exc}")
+            return 0
+        count = 0
+        try:
+            for product in scraper.scrape():
+                storage.write(product)
+                count += 1
+        except Exception as exc:
+            console.print(f"[red]Scraper error for {site_name}: {exc}")
+            logging.exception("Scraper error")
+        finally:
+            scraper.close()
+        console.print(f"  [green]✓[/] {site_name}: {count} products")
+        return count
+
     total_written = 0
     with Storage(Path(db), csv_path, run_id) as storage:
-        for site_name in scrapers_to_run:
-            console.rule(f"[cyan]{site_name}")
-            try:
-                scraper = get_scraper(site_name)
-            except Exception as exc:
-                console.print(f"[red]Failed to init scraper for {site_name}: {exc}")
-                continue
-
-            site_count = 0
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                TaskProgressColumn(),
-                console=console,
-                transient=True,
-            ) as progress:
-                task = progress.add_task(f"Scraping {site_name}…", total=None)
-                try:
-                    for product in scraper.scrape():
-                        storage.write(product)
-                        site_count += 1
-                        total_written += 1
-                        progress.update(task, description=f"{site_name}: {site_count} products…")
-                except Exception as exc:
-                    console.print(f"[red]Scraper error for {site_name}: {exc}")
-                    logging.exception("Scraper error")
-                finally:
-                    scraper.close()
-
-            console.print(f"  [green]✓[/] {site_name}: {site_count} products")
+        if use_parallel:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            with ThreadPoolExecutor(max_workers=len(scrapers_to_run)) as pool:
+                futures = {pool.submit(run_one, s, storage): s for s in scrapers_to_run}
+                for fut in as_completed(futures):
+                    total_written += fut.result()
+        else:
+            for site_name in scrapers_to_run:
+                console.rule(f"[cyan]{site_name}")
+                total_written += run_one(site_name, storage)
 
     console.rule("[bold green]Done")
     console.print(f"Total products written: [bold]{total_written}[/]")

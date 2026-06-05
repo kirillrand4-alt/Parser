@@ -5,6 +5,7 @@ import csv
 import json
 import logging
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Iterable
 
@@ -51,7 +52,9 @@ class Storage:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         csv_path.parent.mkdir(parents=True, exist_ok=True)
 
-        self._conn = sqlite3.connect(db_path)
+        # check_same_thread=False so parallel per-site workers can write through
+        # the single connection; all writes are serialized by self._lock below.
+        self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.executescript(CREATE_TABLE_SQL)
         self._conn.commit()
 
@@ -60,29 +63,26 @@ class Storage:
         self._writer.writeheader()
 
         self._counts: dict[str, int] = {}
+        self._lock = threading.Lock()
 
     def write(self, product: Product) -> None:
         row = product.to_dict()
-        # CSV
-        self._writer.writerow(row)
-
-        # SQLite
         cols = Product.csv_headers()
         placeholders = ", ".join("?" for _ in cols)
         col_names = ", ".join(cols)
         vals = [row[c] for c in cols]
-        try:
-            self._conn.execute(
-                f"INSERT OR IGNORE INTO products (run_id, {col_names}) "
-                f"VALUES (?, {placeholders})",
-                [self.run_id] + vals,
-            )
-            self._conn.commit()
-        except sqlite3.Error as exc:
-            logger.warning("SQLite write error: %s", exc)
-
-        site = product.site
-        self._counts[site] = self._counts.get(site, 0) + 1
+        with self._lock:
+            self._writer.writerow(row)
+            try:
+                self._conn.execute(
+                    f"INSERT OR IGNORE INTO products (run_id, {col_names}) "
+                    f"VALUES (?, {placeholders})",
+                    [self.run_id] + vals,
+                )
+                self._conn.commit()
+            except sqlite3.Error as exc:
+                logger.warning("SQLite write error: %s", exc)
+            self._counts[product.site] = self._counts.get(product.site, 0) + 1
 
     def counts(self) -> dict[str, int]:
         return dict(self._counts)
