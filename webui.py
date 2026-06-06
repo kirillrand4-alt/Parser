@@ -14,6 +14,7 @@ Set WEBUI_USER / WEBUI_PASSWORD to require a login.
 """
 from __future__ import annotations
 
+import io
 import json
 import os
 import queue
@@ -168,7 +169,12 @@ HTML = """
 <div class="card">
   <label>Результаты (CSV)</label>
   <ul class="files-list" id="filesList"></ul>
-  <button class="btn btn-blue" style="margin-top:12px" onclick="loadFiles()">🔄 Обновить список</button>
+  <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap">
+    <button class="btn btn-blue" onclick="loadFiles()">🔄 Обновить список</button>
+    <a id="btnMerge" class="btn btn-green" href="/download-all" style="text-decoration:none">⬇ Скачать общий список</a>
+    <button class="btn btn-red" onclick="clearFiles()">🗑 Очистить все CSV</button>
+  </div>
+  <div id="mergeInfo" style="font-size:13px;color:#666;margin-top:8px"></div>
 </div>
 
 <script>
@@ -227,14 +233,29 @@ function appendLog(line, cls) {
   el.scrollTop = el.scrollHeight;
 }
 
+function clearFiles() {
+  if (!confirm('Удалить все CSV-файлы из папки data/?')) return;
+  fetch('/clear-files', {method:'POST'}).then(r => r.json()).then(d => {
+    if (d.ok) loadFiles();
+    else alert('Ошибка: ' + (d.error || '?'));
+  });
+}
+
 function loadFiles() {
   fetch('/files').then(r => r.json()).then(files => {
     const ul = document.getElementById('filesList');
+    const info = document.getElementById('mergeInfo');
     ul.innerHTML = '';
+    // update merge button label with total row count
+    const total = files.reduce((s, f) => s + (f.rows || 0), 0);
+    info.textContent = files.length
+      ? `Итого файлов: ${files.length}, строк данных: ${total.toLocaleString('ru')}`
+      : '';
     if (!files.length) { ul.innerHTML = '<li>Файлов пока нет.</li>'; return; }
     files.forEach(f => {
       const li = document.createElement('li');
-      li.innerHTML = `<span>${f.name} <small style="color:#999">${f.size}</small></span>
+      const rows = f.rows > 0 ? ` · ${f.rows.toLocaleString('ru')} стр.` : '';
+      li.innerHTML = `<span>${f.name} <small style="color:#999">${f.size}${rows}</small></span>
         <a href="/download/${encodeURIComponent(f.name)}">⬇ Скачать</a>`;
       ul.appendChild(li);
     });
@@ -406,8 +427,61 @@ def files():
     for f in sorted(DATA_DIR.glob("*.csv"), key=lambda p: p.stat().st_mtime, reverse=True):
         size = f.stat().st_size
         size_str = f"{size // 1024} КБ" if size >= 1024 else f"{size} Б"
-        result.append({"name": f.name, "size": size_str})
+        try:
+            rows = max(0, f.read_text(encoding="utf-8", errors="replace").count("\n") - 1)
+        except Exception:
+            rows = 0
+        result.append({"name": f.name, "size": size_str, "rows": rows})
     return jsonify(result)
+
+
+@app.route("/download-all")
+@requires_auth
+def download_all():
+    """Merge all CSVs in data/ into one file and stream it."""
+    DATA_DIR.mkdir(exist_ok=True)
+    csvs = sorted(DATA_DIR.glob("*.csv"), key=lambda p: p.stat().st_mtime)
+    if not csvs:
+        return "Нет CSV-файлов.", 404
+
+    buf = io.StringIO()
+    header_written = False
+    for path in csvs:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+        lines = text.splitlines()
+        if not lines:
+            continue
+        if not header_written:
+            buf.write(lines[0] + "\n")
+            header_written = True
+        for line in lines[1:]:
+            if line.strip():
+                buf.write(line + "\n")
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    fname = f"all_prices_{ts}.csv"
+    return Response(
+        buf.getvalue(),
+        mimetype="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@app.route("/clear-files", methods=["POST"])
+@requires_auth
+def clear_files():
+    DATA_DIR.mkdir(exist_ok=True)
+    deleted = 0
+    for f in DATA_DIR.glob("*.csv"):
+        try:
+            f.unlink()
+            deleted += 1
+        except Exception:
+            pass
+    return jsonify({"ok": True, "deleted": deleted})
 
 
 @app.route("/download/<filename>")
