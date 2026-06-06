@@ -3,15 +3,24 @@
 Engine: 1С-Битрикс.
 Source: HTML listing (YML feed not publicly available; check /yml/ on first run).
 Pagination: ?PAGEN_1=N  (standard Bitrix).
+
+Proxy strategy (economical):
+  - Requests go direct by default (fast, no proxy traffic cost).
+  - On CONSECUTIVE_500_THRESHOLD consecutive HTTP 500s → switch to proxy.
+  - After PROXY_RECOVER_AFTER successful requests via proxy → try direct again.
+  - Proxy creds read from env PNEVMO_SKLAD_PROXY (socks5://user:pass@host:port).
+  - IP refresh URL read from env PNEVMO_SKLAD_PROXY_REFRESH (GET request).
 """
 from __future__ import annotations
 
 import logging
 import os
 import re
+import time
 import urllib.parse
 from typing import Optional
 
+import requests
 from bs4 import BeautifulSoup
 
 from ..base_scraper import BaseScraper
@@ -23,6 +32,11 @@ from ..models import (
 from ..sitemap import collect_product_urls
 
 logger = logging.getLogger(__name__)
+
+# Switch to proxy after this many consecutive 500s
+_CONSECUTIVE_500_THRESHOLD = int(os.getenv("PNEVMO_SKLAD_500_THRESHOLD", "3"))
+# After this many successful proxy requests, try going direct again
+_PROXY_RECOVER_AFTER = int(os.getenv("PNEVMO_SKLAD_PROXY_RECOVER", "50"))
 
 BASE = "https://www.pnevmo-sklad.ru"
 SITEMAP = "https://www.pnevmo-sklad.ru/sitemap.xml"
@@ -55,8 +69,66 @@ COMPRESSOR_SUBCATS = {
 class PnevmoSkladScraper(BaseScraper):
     site = "pnevmo-sklad.ru"
     base_url = BASE
-    delay_min = 10.0
-    delay_max = 14.0
+    delay_min = 0.3
+    delay_max = 0.5
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._proxy_url = os.getenv("PNEVMO_SKLAD_PROXY", "")
+        self._proxy_refresh = os.getenv("PNEVMO_SKLAD_PROXY_REFRESH", "")
+        self._using_proxy = False
+        self._consecutive_500 = 0
+        self._proxy_success = 0
+
+    def _enable_proxy(self) -> None:
+        if not self._proxy_url or self._using_proxy:
+            return
+        # Refresh IP before switching (avoid reusing a burned IP)
+        if self._proxy_refresh:
+            try:
+                requests.get(self._proxy_refresh, timeout=10)
+                time.sleep(3)  # give provider a moment to rotate
+                logger.info("[pnevmo-sklad] proxy IP refreshed")
+            except Exception as exc:
+                logger.warning("[pnevmo-sklad] proxy IP refresh failed: %s", exc)
+        proxies = {"http": self._proxy_url, "https": self._proxy_url}
+        self.client._session.proxies.update(proxies)
+        self._using_proxy = True
+        self._proxy_success = 0
+        logger.info("[pnevmo-sklad] switched to PROXY after %d consecutive 500s",
+                    self._consecutive_500)
+
+    def _disable_proxy(self) -> None:
+        if not self._using_proxy:
+            return
+        self.client._session.proxies.clear()
+        self._using_proxy = False
+        self._consecutive_500 = 0
+        logger.info("[pnevmo-sklad] back to DIRECT after %d proxy successes",
+                    _PROXY_RECOVER_AFTER)
+
+    def _get_with_proxy_fallback(self, url: str) -> requests.Response:
+        """GET with automatic proxy switching on consecutive 500s."""
+        try:
+            resp = self.client.get(url)
+            # Success — track proxy recovery
+            self._consecutive_500 = 0
+            if self._using_proxy:
+                self._proxy_success += 1
+                if self._proxy_success >= _PROXY_RECOVER_AFTER:
+                    self._disable_proxy()
+            return resp
+        except requests.HTTPError as exc:
+            status = getattr(exc.response, "status_code", None)
+            if status == 500:
+                self._consecutive_500 += 1
+                if (not self._using_proxy
+                        and self._proxy_url
+                        and self._consecutive_500 >= _CONSECUTIVE_500_THRESHOLD):
+                    self._enable_proxy()
+                    # Retry once via proxy
+                    return self.client.get(url)
+            raise
 
     def discover(self) -> list[str]:
         # Single sentinel; product URLs come from the sitemap in fetch_listing.
@@ -92,7 +164,7 @@ class PnevmoSkladScraper(BaseScraper):
         return urls
 
     def parse_product(self, url: str) -> Optional[Product]:
-        resp = self.client.get(url)
+        resp = self._get_with_proxy_fallback(url)
         soup = BeautifulSoup(resp.content, "lxml")
         page_text = soup.get_text(" ", strip=True)
 
