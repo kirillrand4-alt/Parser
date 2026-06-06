@@ -136,20 +136,33 @@ HTML = """
 </div>
 
 <div class="card">
-  <label>⚙️ Настройки прокси (pnevmo-sklad.ru)</label>
-  <p style="color:#666;font-size:13px;margin-top:0">Значения хранятся только в памяти — не сохраняются на диск и не попадают в git. Нужно вводить заново после перезапуска сервера.</p>
-  <div style="display:grid;gap:10px;margin-top:8px;">
-    <div>
-      <label style="font-size:13px">PROXY__PNEVMO_SKLAD_RU<br><small style="font-weight:normal;color:#888">socks5://user:pass@host:port</small></label>
-      <input id="proxyUrl" type="text" placeholder="socks5://..." style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:13px;box-sizing:border-box">
+  <details id="advanced">
+    <summary style="cursor:pointer;font-weight:600;font-size:16px;outline:none">⚙️ Подробные настройки</summary>
+    <p style="color:#666;font-size:13px">Применяются к выбранному выше сайту: <b id="cfgSite">—</b>. Хранятся только в памяти — не сохраняются на диск и не попадают в git. Нужно вводить заново после перезапуска сервера.</p>
+
+    <div style="margin-top:12px">
+      <label style="font-size:13px">Задержка между запросами, сек</label>
+      <div style="display:flex;gap:10px;align-items:center">
+        <input id="delayMin" type="number" step="0.1" min="0" placeholder="мин" style="width:90px;padding:8px;border:1px solid #ccc;border-radius:4px">
+        <span style="color:#888">—</span>
+        <input id="delayMax" type="number" step="0.1" min="0" placeholder="макс" style="width:90px;padding:8px;border:1px solid #ccc;border-radius:4px">
+      </div>
     </div>
-    <div>
-      <label style="font-size:13px">PROXY_REFRESH__PNEVMO_SKLAD_RU<br><small style="font-weight:normal;color:#888">URL для смены IP (GET-запрос)</small></label>
-      <input id="proxyRefresh" type="text" placeholder="https://api.example.com/refresh-ip" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:13px;box-sizing:border-box">
+
+    <div style="display:grid;gap:10px;margin-top:14px;">
+      <div>
+        <label style="font-size:13px">Прокси<br><small style="font-weight:normal;color:#888">http://user:pass@host:port или socks5://...</small></label>
+        <input id="proxyUrl" type="text" placeholder="http://..." style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:13px;box-sizing:border-box">
+      </div>
+      <div>
+        <label style="font-size:13px">URL смены IP прокси<br><small style="font-weight:normal;color:#888">GET-запрос для ротации IP (опционально)</small></label>
+        <input id="proxyRefresh" type="text" placeholder="https://.../refresh-ip" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:13px;box-sizing:border-box">
+      </div>
     </div>
-  </div>
-  <button class="btn btn-blue" style="margin-top:12px" onclick="saveProxy()">💾 Сохранить</button>
-  <span id="proxyStatus" style="margin-left:12px;font-size:13px;color:#28a745"></span>
+
+    <button class="btn btn-blue" style="margin-top:14px" onclick="saveSettings()">💾 Сохранить</button>
+    <span id="cfgStatus" style="margin-left:12px;font-size:13px;color:#28a745"></span>
+  </details>
 </div>
 
 <div class="card">
@@ -228,26 +241,40 @@ function loadFiles() {
   });
 }
 
-function saveProxy() {
-  const proxy = document.getElementById('proxyUrl').value.trim();
-  const refresh = document.getElementById('proxyRefresh').value.trim();
+function currentSite() { return document.getElementById('site').value; }
+
+function loadSettings() {
+  const site = currentSite();
+  document.getElementById('cfgSite').textContent = site;
+  fetch('/settings?site=' + encodeURIComponent(site)).then(r => r.json()).then(d => {
+    document.getElementById('proxyUrl').value = d.proxy || '';
+    document.getElementById('proxyRefresh').value = d.proxy_refresh || '';
+    document.getElementById('delayMin').value = d.delay_min || '';
+    document.getElementById('delayMax').value = d.delay_max || '';
+  });
+}
+
+function saveSettings() {
+  const payload = {
+    site: currentSite(),
+    proxy: document.getElementById('proxyUrl').value.trim(),
+    proxy_refresh: document.getElementById('proxyRefresh').value.trim(),
+    delay_min: document.getElementById('delayMin').value.trim(),
+    delay_max: document.getElementById('delayMax').value.trim(),
+  };
   fetch('/settings', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({PROXY__PNEVMO_SKLAD_RU: proxy, PROXY_REFRESH__PNEVMO_SKLAD_RU: refresh})
+    body: JSON.stringify(payload)
   }).then(r => r.json()).then(d => {
-    const st = document.getElementById('proxyStatus');
-    if (d.ok) { st.textContent = '✓ Сохранено'; setTimeout(() => st.textContent = '', 3000); }
+    const st = document.getElementById('cfgStatus');
+    if (d.ok) { st.style.color='#28a745'; st.textContent = '✓ Сохранено'; setTimeout(() => st.textContent = '', 3000); }
     else { st.style.color='#dc3545'; st.textContent = 'Ошибка: ' + (d.error || '?'); }
   });
 }
 
-// Load current settings on page load
-fetch('/settings').then(r => r.json()).then(d => {
-  if (d.PROXY__PNEVMO_SKLAD_RU) document.getElementById('proxyUrl').value = d.PROXY__PNEVMO_SKLAD_RU;
-  if (d.PROXY_REFRESH__PNEVMO_SKLAD_RU) document.getElementById('proxyRefresh').value = d.PROXY_REFRESH__PNEVMO_SKLAD_RU;
-});
-
+document.getElementById('site').addEventListener('change', loadSettings);
+loadSettings();
 loadFiles();
 </script>
 </body>
@@ -312,22 +339,43 @@ def stop():
     return jsonify({"ok": True})
 
 
+def _site_key(site: str) -> str:
+    """Match the env-var suffix used by HttpClient / BaseScraper."""
+    return site.replace(".", "_").replace("-", "_").upper()
+
+
+# Maps the UI field name → env-var prefix for a given site.
+_FIELD_ENV = {
+    "proxy": "PROXY__",
+    "proxy_refresh": "PROXY_REFRESH__",
+    "delay_min": "DELAY_MIN__",
+    "delay_max": "DELAY_MAX__",
+}
+
+
 @app.route("/settings", methods=["GET", "POST"])
 @requires_auth
 def settings():
     global _runtime_env
     if request.method == "POST":
         data = request.get_json() or {}
-        allowed = {"PROXY__PNEVMO_SKLAD_RU", "PROXY_REFRESH__PNEVMO_SKLAD_RU"}
-        for k in allowed:
-            v = data.get(k, "").strip()
+        site = (data.get("site") or "").strip()
+        if not site or site == "all":
+            return jsonify({"error": "Выберите конкретный сайт (не «all»)."})
+        key = _site_key(site)
+        for field, prefix in _FIELD_ENV.items():
+            env_name = f"{prefix}{key}"
+            v = str(data.get(field, "")).strip()
             if v:
-                _runtime_env[k] = v
+                _runtime_env[env_name] = v
             else:
-                _runtime_env.pop(k, None)
+                _runtime_env.pop(env_name, None)
         return jsonify({"ok": True})
-    return jsonify({k: _runtime_env.get(k, "") for k in
-                    ("PROXY__PNEVMO_SKLAD_RU", "PROXY_REFRESH__PNEVMO_SKLAD_RU")})
+
+    site = (request.args.get("site") or "").strip()
+    key = _site_key(site)
+    return jsonify({field: _runtime_env.get(f"{prefix}{key}", "")
+                    for field, prefix in _FIELD_ENV.items()})
 
 
 @app.route("/log-stream")
