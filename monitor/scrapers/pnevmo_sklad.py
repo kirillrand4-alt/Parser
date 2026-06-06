@@ -64,8 +64,8 @@ COMPRESSOR_SUBCATS = {
 class PnevmoSkladScraper(BaseScraper):
     site = "pnevmo-sklad.ru"
     base_url = BASE
-    delay_min = 0.3
-    delay_max = 0.5
+    delay_min = 2.0
+    delay_max = 3.0
 
     # Retry-with-proxy + per-request UA rotation now live in HttpClient.get and
     # apply to every site. Configure the proxy with PROXY__PNEVMO_SKLAD_RU (or

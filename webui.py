@@ -71,6 +71,10 @@ _proc: subprocess.Popen | None = None
 _log_queue: queue.Queue = queue.Queue()
 _proc_lock = threading.Lock()
 
+# Runtime env overrides (never written to disk or git).
+# Injected into subprocess env on each /start call.
+_runtime_env: dict[str, str] = {}
+
 HTML = """
 <!DOCTYPE html>
 <html lang="ru">
@@ -129,6 +133,23 @@ HTML = """
 <div class="card">
   <label>Лог</label>
   <div id="log"></div>
+</div>
+
+<div class="card">
+  <label>⚙️ Настройки прокси (pnevmo-sklad.ru)</label>
+  <p style="color:#666;font-size:13px;margin-top:0">Значения хранятся только в памяти — не сохраняются на диск и не попадают в git. Нужно вводить заново после перезапуска сервера.</p>
+  <div style="display:grid;gap:10px;margin-top:8px;">
+    <div>
+      <label style="font-size:13px">PROXY__PNEVMO_SKLAD_RU<br><small style="font-weight:normal;color:#888">socks5://user:pass@host:port</small></label>
+      <input id="proxyUrl" type="text" placeholder="socks5://..." style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:13px;box-sizing:border-box">
+    </div>
+    <div>
+      <label style="font-size:13px">PROXY_REFRESH__PNEVMO_SKLAD_RU<br><small style="font-weight:normal;color:#888">URL для смены IP (GET-запрос)</small></label>
+      <input id="proxyRefresh" type="text" placeholder="https://api.example.com/refresh-ip" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:13px;box-sizing:border-box">
+    </div>
+  </div>
+  <button class="btn btn-blue" style="margin-top:12px" onclick="saveProxy()">💾 Сохранить</button>
+  <span id="proxyStatus" style="margin-left:12px;font-size:13px;color:#28a745"></span>
 </div>
 
 <div class="card">
@@ -207,6 +228,26 @@ function loadFiles() {
   });
 }
 
+function saveProxy() {
+  const proxy = document.getElementById('proxyUrl').value.trim();
+  const refresh = document.getElementById('proxyRefresh').value.trim();
+  fetch('/settings', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({PROXY__PNEVMO_SKLAD_RU: proxy, PROXY_REFRESH__PNEVMO_SKLAD_RU: refresh})
+  }).then(r => r.json()).then(d => {
+    const st = document.getElementById('proxyStatus');
+    if (d.ok) { st.textContent = '✓ Сохранено'; setTimeout(() => st.textContent = '', 3000); }
+    else { st.style.color='#dc3545'; st.textContent = 'Ошибка: ' + (d.error || '?'); }
+  });
+}
+
+// Load current settings on page load
+fetch('/settings').then(r => r.json()).then(d => {
+  if (d.PROXY__PNEVMO_SKLAD_RU) document.getElementById('proxyUrl').value = d.PROXY__PNEVMO_SKLAD_RU;
+  if (d.PROXY_REFRESH__PNEVMO_SKLAD_RU) document.getElementById('proxyRefresh').value = d.PROXY_REFRESH__PNEVMO_SKLAD_RU;
+});
+
 loadFiles();
 </script>
 </body>
@@ -233,6 +274,7 @@ def start():
         mode = data.get("mode", "resume")  # "resume" | "fresh"
 
         env = os.environ.copy()
+        env.update(_runtime_env)
         env["RESUME"] = "1" if mode == "resume" else "0"
 
         cmd = [sys.executable, "-m", "monitor", "scrape",
@@ -268,6 +310,24 @@ def stop():
         if _proc and _proc.poll() is None:
             _proc.terminate()
     return jsonify({"ok": True})
+
+
+@app.route("/settings", methods=["GET", "POST"])
+@requires_auth
+def settings():
+    global _runtime_env
+    if request.method == "POST":
+        data = request.get_json() or {}
+        allowed = {"PROXY__PNEVMO_SKLAD_RU", "PROXY_REFRESH__PNEVMO_SKLAD_RU"}
+        for k in allowed:
+            v = data.get(k, "").strip()
+            if v:
+                _runtime_env[k] = v
+            else:
+                _runtime_env.pop(k, None)
+        return jsonify({"ok": True})
+    return jsonify({k: _runtime_env.get(k, "") for k in
+                    ("PROXY__PNEVMO_SKLAD_RU", "PROXY_REFRESH__PNEVMO_SKLAD_RU")})
 
 
 @app.route("/log-stream")
