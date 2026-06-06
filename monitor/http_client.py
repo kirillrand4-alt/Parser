@@ -26,12 +26,55 @@ DEFAULT_HEADERS = {
     "Upgrade-Insecure-Requests": "1",
 }
 
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-]
+def _build_user_agents() -> list[str]:
+    """Generate a large pool (~1000+) of realistic desktop browser UA strings
+    by combining current Chrome/Firefox/Edge/Safari versions with common OS
+    platforms. Far more fingerprint variety than a handful of hardcoded lines."""
+    platforms = [
+        "Windows NT 10.0; Win64; x64",
+        "Windows NT 11.0; Win64; x64",
+        "Windows NT 10.0; WOW64",
+        "Macintosh; Intel Mac OS X 10_15_7",
+        "Macintosh; Intel Mac OS X 13_5",
+        "Macintosh; Intel Mac OS X 14_4",
+        "X11; Linux x86_64",
+        "X11; Ubuntu; Linux x86_64",
+    ]
+    # Recent-ish major versions (kept plausible; exact build suffix .0.0)
+    chrome_majors = list(range(112, 134))   # 112..133
+    firefox_majors = list(range(112, 134))
+    # A few plausible build numbers to multiply variety per major version.
+    chrome_builds = ("0.0.0", "0.6099.109", "0.6045.199", "0.5993.88")
+    webkit = "AppleWebKit/537.36 (KHTML, like Gecko)"
+
+    uas: list[str] = []
+    for plat in platforms:
+        for v in chrome_majors:
+            for b in chrome_builds:
+                # Chrome
+                uas.append(f"Mozilla/5.0 ({plat}) {webkit} Chrome/{v}.{b} Safari/537.36")
+            # Edge (Chromium)
+            uas.append(f"Mozilla/5.0 ({plat}) {webkit} Chrome/{v}.0.0.0 Safari/537.36 "
+                       f"Edg/{v}.0.0.0")
+        for v in firefox_majors:
+            rv = plat if "rv:" in plat else f"{plat}; rv:{v}.0"
+            uas.append(f"Mozilla/5.0 ({rv}) Gecko/20100101 Firefox/{v}.0")
+    # Safari on macOS (a few)
+    for sv in ("16.5", "17.0", "17.4", "16.6"):
+        uas.append(
+            f"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            f"AppleWebKit/605.1.15 (KHTML, like Gecko) Version/{sv} Safari/605.1.15")
+    # De-dup while preserving order
+    seen: set[str] = set()
+    out: list[str] = []
+    for ua in uas:
+        if ua not in seen:
+            seen.add(ua)
+            out.append(ua)
+    return out
+
+
+USER_AGENTS = _build_user_agents()
 
 
 class HttpClient:
