@@ -134,6 +134,14 @@ class BaseScraper(ABC):
         if seed_done:
             logger.info("[%s] seeded %d done URLs from prior CSV output",
                         self.site, len(seed_done))
+            # Fold the CSV-seeded URLs into the persisted done set so the
+            # checkpoint becomes the single source of truth: it then reflects
+            # the *real* number of completed URLs (not just this session's) and
+            # a later resume picks them up even if the CSVs are moved away.
+            before = len(done_urls)
+            done_urls |= seed_done
+            if len(done_urls) != before:
+                self._save_progress(done_urls, failed_urls)
 
         pending = [u for u in product_urls if u not in done_urls and u not in seed_done]
         if resume and len(pending) < len(product_urls):
@@ -308,8 +316,20 @@ class BaseScraper(ABC):
 
         ``failed_urls`` is what a proxy-enabled re-run (RESUME=1) should retry;
         ``done_urls`` is skipped on resume.
+
+        Done URLs are merged with whatever is already on disk so a stale or
+        concurrent writer (or a checkpoint loaded before an updated one was
+        uploaded) can never shrink the recorded progress.
         """
-        self._checkpoint["done_urls"] = sorted(done_urls)
+        on_disk = set()
+        if self._checkpoint_path.exists():
+            try:
+                on_disk = set(json.loads(
+                    self._checkpoint_path.read_text()).get("done_urls", []))
+            except Exception:
+                pass
+        merged_done = set(done_urls) | on_disk
+        self._checkpoint["done_urls"] = sorted(merged_done)
         self._checkpoint["failed_urls"] = sorted(failed_urls)
         self._checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._checkpoint_path.with_suffix(".json.tmp")
