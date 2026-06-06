@@ -56,6 +56,10 @@ def cli() -> None:
 def scrape_cmd(site: str, out: str | None, db: str, parallel: bool, verbose: bool) -> None:
     """Scrape one or all competitor sites."""
     setup_logging(verbose)
+    # Clear seed cache so each run re-reads CSVs fresh (cache persists across
+    # in-process re-runs in Jupyter and would return stale empty sets otherwise).
+    from .base_scraper import BaseScraper
+    BaseScraper._seed_cache.clear()
     run_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     csv_path = Path(out) if out else Path(f"{CSV_BASE}_{run_id}.csv")
 
