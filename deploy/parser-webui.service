@@ -1,0 +1,38 @@
+# systemd unit for the Parser web UI.
+# Install:
+#   cp deploy/parser-webui.service /etc/systemd/system/
+#   edit the Environment lines (password, paths, proxy)
+#   systemctl daemon-reload
+#   systemctl enable --now parser-webui
+#   journalctl -u parser-webui -f      # live logs
+
+[Unit]
+Description=Parser web UI (Flask)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/parser
+ExecStart=/usr/bin/python3 /opt/parser/webui.py
+Restart=on-failure
+RestartSec=5
+
+# --- Web UI auth (CHANGE THE PASSWORD) ---
+Environment=WEBUI_HOST=127.0.0.1
+Environment=WEBUI_PORT=5000
+Environment=WEBUI_USER=admin
+Environment=WEBUI_PASSWORD=ИЗМЕНИ_МЕНЯ
+
+# --- Parser paths (local disk — no Google Drive) ---
+Environment=CHECKPOINT_DIR=/opt/parser/cache
+Environment=SEED_DONE_CSV_DIR=/opt/parser/data
+Environment=HTTP_CACHE_DIR=/opt/parser/http_cache
+Environment=RESUME=1
+Environment=WORKERS=1
+
+# --- Proxy (optional; uncomment + fill) ---
+# Environment=PROXY=socks5://user:pass@host:443
+# Environment=PROXY_REFRESH=https://api.asocks.com/proxy/.../refresh-ip
+
+[Install]
+WantedBy=multi-user.target

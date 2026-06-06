@@ -1,24 +1,57 @@
-"""Simple web UI to run the scraper locally.
+"""Simple web UI to run the scraper.
 
-Usage:
+Usage (local):
     pip install flask
     python webui.py
     Open http://localhost:5000
+
+Usage (server, behind nginx + HTTPS):
+    Set a login/password and bind to localhost; nginx proxies :443 → :5000.
+    WEBUI_USER=admin WEBUI_PASSWORD=secret python webui.py
+
+Auth: HTTP Basic. If WEBUI_PASSWORD is unset, the UI is OPEN (local use only).
+Set WEBUI_USER / WEBUI_PASSWORD to require a login.
 """
 from __future__ import annotations
 
 import json
 import os
 import queue
+import secrets
 import subprocess
 import sys
 import threading
 from datetime import datetime
+from functools import wraps
 from pathlib import Path
 
 from flask import Flask, Response, jsonify, render_template_string, request, send_file
 
 app = Flask(__name__)
+
+# --- Auth ----------------------------------------------------------------
+WEBUI_USER = os.getenv("WEBUI_USER", "admin")
+WEBUI_PASSWORD = os.getenv("WEBUI_PASSWORD", "")  # empty → no auth (local only)
+
+
+def _check_auth(user: str, pw: str) -> bool:
+    # constant-time compare to avoid timing leaks
+    return (secrets.compare_digest(user, WEBUI_USER)
+            and secrets.compare_digest(pw, WEBUI_PASSWORD))
+
+
+def requires_auth(f):
+    @wraps(f)
+    def wrapped(*args, **kwargs):
+        if not WEBUI_PASSWORD:  # auth disabled
+            return f(*args, **kwargs)
+        auth = request.authorization
+        if not auth or not _check_auth(auth.username, auth.password):
+            return Response(
+                "Требуется авторизация.", 401,
+                {"WWW-Authenticate": 'Basic realm="Parser UI"'})
+        return f(*args, **kwargs)
+    return wrapped
 
 SITES = [
     "all",
@@ -182,11 +215,13 @@ loadFiles();
 
 
 @app.route("/")
+@requires_auth
 def index():
     return render_template_string(HTML, sites=SITES)
 
 
 @app.route("/start", methods=["POST"])
+@requires_auth
 def start():
     global _proc
     with _proc_lock:
@@ -226,6 +261,7 @@ def _drain(proc: subprocess.Popen) -> None:
 
 
 @app.route("/stop", methods=["POST"])
+@requires_auth
 def stop():
     global _proc
     with _proc_lock:
@@ -235,6 +271,7 @@ def stop():
 
 
 @app.route("/log-stream")
+@requires_auth
 def log_stream():
     def generate():
         while True:
@@ -254,6 +291,7 @@ def log_stream():
 
 
 @app.route("/files")
+@requires_auth
 def files():
     DATA_DIR.mkdir(exist_ok=True)
     result = []
@@ -265,6 +303,7 @@ def files():
 
 
 @app.route("/download/<filename>")
+@requires_auth
 def download(filename: str):
     path = DATA_DIR / filename
     if not path.exists() or not path.resolve().is_relative_to(DATA_DIR.resolve()):
@@ -273,5 +312,12 @@ def download(filename: str):
 
 
 if __name__ == "__main__":
-    print("Открывайте в браузере: http://localhost:5000")
-    app.run(debug=False, port=5000, threaded=True)
+    # Behind nginx, bind to localhost (WEBUI_HOST=127.0.0.1). For direct LAN
+    # access without a reverse proxy, set WEBUI_HOST=0.0.0.0 (and a password!).
+    host = os.getenv("WEBUI_HOST", "127.0.0.1")
+    port = int(os.getenv("WEBUI_PORT", "5000"))
+    if not WEBUI_PASSWORD and host != "127.0.0.1":
+        print("⚠️  WEBUI_PASSWORD не задан, а сервер слушает не только localhost!")
+        print("    Установите WEBUI_PASSWORD, иначе интерфейс открыт всем.")
+    print(f"Открывайте в браузере: http://{host}:{port}")
+    app.run(debug=False, host=host, port=port, threaded=True)
