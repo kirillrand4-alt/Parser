@@ -149,7 +149,19 @@ class PnevmoSkladScraper(BaseScraper):
                         self._enable_proxy()
                         return self.client.get(url, force_refresh=True)
                 raise
-        # all retries exhausted
+        # Direct retries exhausted (still 500). Last resort: try once through the
+        # proxy with a fresh UA — a different exit IP may not hit the broken path.
+        if self._proxy_url and not self._using_proxy:
+            logger.info("[pnevmo-sklad] 500 persists after %d tries — trying via PROXY: %s",
+                        _RETRY_500_ATTEMPTS, url)
+            self._enable_proxy()
+            self._rotate_ua()
+            try:
+                resp = self.client.get(url, force_refresh=True)
+                self._proxy_success += 1
+                return resp
+            except requests.HTTPError:
+                pass  # give up — fall through to raise
         raise last_exc  # type: ignore[misc]
 
     def discover(self) -> list[str]:
