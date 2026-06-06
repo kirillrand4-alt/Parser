@@ -125,6 +125,8 @@ class PnevmoSkladScraper(BaseScraper):
         """
         import time
         last_exc: Exception | None = None
+        # Fresh UA per page so requests don't all share one fingerprint.
+        self._rotate_ua()
         for attempt in range(_RETRY_500_ATTEMPTS):
             try:
                 resp = self.client.get(url, force_refresh=(attempt > 0))
