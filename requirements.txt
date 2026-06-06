@@ -1,4 +1,6 @@
 requests>=2.31
+requests[socks]>=2.31
+PySocks>=1.7
 requests-cache>=1.2
 beautifulsoup4>=4.12
 lxml>=5.0
