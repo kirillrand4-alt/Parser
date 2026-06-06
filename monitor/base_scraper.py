@@ -125,25 +125,25 @@ class BaseScraper(ABC):
             self._checkpoint["product_urls"] = product_urls
             self._save_progress(done_urls, failed_urls)
 
-        # SEED_DONE_CSV_DIR: skip any URL already present (for this site) in a
-        # previous run's CSV output. In-memory only — these are NOT written to
-        # the checkpoint, so the skip applies to this run only and prior price
-        # history is left untouched. Lets a run avoid re-scraping items already
-        # captured across many earlier runs.
-        seed_done = self._load_seed_done() if resume else set()
-        if seed_done:
-            logger.info("[%s] seeded %d done URLs from prior CSV output",
-                        self.site, len(seed_done))
-            # Fold the CSV-seeded URLs into the persisted done set so the
-            # checkpoint becomes the single source of truth: it then reflects
-            # the *real* number of completed URLs (not just this session's) and
-            # a later resume picks them up even if the CSVs are moved away.
-            before = len(done_urls)
-            done_urls |= seed_done
-            if len(done_urls) != before:
-                self._save_progress(done_urls, failed_urls)
+        # SEED_DONE_CSV_DIR: skip URLs already present in prior-run CSVs.
+        # We fold them into done_urls and persist immediately so subsequent
+        # runs load them from the checkpoint (O(1)) instead of re-reading
+        # every CSV again (which can take hours on slow network drives).
+        if resume:
+            csv_seeded = self._checkpoint.get("csv_seeded", False)
+            if not csv_seeded:
+                seed_done = self._load_seed_done()
+                if seed_done:
+                    logger.info("[%s] seeded %d done URLs from prior CSV output",
+                                self.site, len(seed_done))
+                    done_urls |= seed_done
+                    self._checkpoint["csv_seeded"] = True
+                    self._save_progress(done_urls, failed_urls)
+            else:
+                logger.info("[%s] CSV seed already in checkpoint — skipping CSV scan",
+                            self.site)
 
-        pending = [u for u in product_urls if u not in done_urls and u not in seed_done]
+        pending = [u for u in product_urls if u not in done_urls]
         if resume and len(pending) < len(product_urls):
             logger.info("[%s] resume: skipping %d already-done URLs",
                         self.site, len(product_urls) - len(pending))
