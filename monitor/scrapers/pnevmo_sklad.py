@@ -77,7 +77,7 @@ class PnevmoSkladScraper(BaseScraper):
         self._proxy_url = os.getenv("PNEVMO_SKLAD_PROXY", "")
         self._proxy_refresh = os.getenv("PNEVMO_SKLAD_PROXY_REFRESH", "")
         self._using_proxy = False
-        self._consecutive_500 = 0
+        self._consecutive_blocks = 0
         self._proxy_success = 0
 
     def _enable_proxy(self) -> None:
@@ -96,23 +96,26 @@ class PnevmoSkladScraper(BaseScraper):
         self._using_proxy = True
         self._proxy_success = 0
         logger.info("[pnevmo-sklad] switched to PROXY after %d consecutive 500s",
-                    self._consecutive_500)
+                    self._consecutive_blocks)
 
     def _disable_proxy(self) -> None:
         if not self._using_proxy:
             return
         self.client._session.proxies.clear()
         self._using_proxy = False
-        self._consecutive_500 = 0
+        self._consecutive_blocks = 0
         logger.info("[pnevmo-sklad] back to DIRECT after %d proxy successes",
                     _PROXY_RECOVER_AFTER)
 
     def _get_with_proxy_fallback(self, url: str) -> requests.Response:
-        """GET with automatic proxy switching on consecutive 500s."""
+        """GET with automatic proxy switching on 403/429 blocks.
+
+        500 = broken page on the server side (not IP-based blocking) — skip it
+        by re-raising immediately so the base scraper logs it as a normal error.
+        403/429 = we are being rate-limited/blocked — switch to proxy.
+        """
         try:
             resp = self.client.get(url)
-            # Success — track proxy recovery
-            self._consecutive_500 = 0
             if self._using_proxy:
                 self._proxy_success += 1
                 if self._proxy_success >= _PROXY_RECOVER_AFTER:
@@ -120,13 +123,12 @@ class PnevmoSkladScraper(BaseScraper):
             return resp
         except requests.HTTPError as exc:
             status = getattr(exc.response, "status_code", None)
-            if status == 500:
-                self._consecutive_500 += 1
+            if status in (403, 429):
+                self._consecutive_blocks += 1
                 if (not self._using_proxy
                         and self._proxy_url
-                        and self._consecutive_500 >= _CONSECUTIVE_500_THRESHOLD):
+                        and self._consecutive_blocks >= _CONSECUTIVE_500_THRESHOLD):
                     self._enable_proxy()
-                    # Retry once via proxy
                     return self.client.get(url)
             raise
 
