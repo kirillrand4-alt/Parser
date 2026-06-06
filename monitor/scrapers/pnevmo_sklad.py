@@ -37,6 +37,8 @@ logger = logging.getLogger(__name__)
 _CONSECUTIVE_500_THRESHOLD = int(os.getenv("PNEVMO_SKLAD_500_THRESHOLD", "3"))
 # After this many successful proxy requests, try going direct again
 _PROXY_RECOVER_AFTER = int(os.getenv("PNEVMO_SKLAD_PROXY_RECOVER", "50"))
+# How many times to retry a 500 (with fresh UA + pause) before skipping the page
+_RETRY_500_ATTEMPTS = int(os.getenv("PNEVMO_SKLAD_RETRY_500", "3"))
 
 BASE = "https://www.pnevmo-sklad.ru"
 SITEMAP = "https://www.pnevmo-sklad.ru/sitemap.xml"
@@ -107,30 +109,48 @@ class PnevmoSkladScraper(BaseScraper):
         logger.info("[pnevmo-sklad] back to DIRECT after %d proxy successes",
                     _PROXY_RECOVER_AFTER)
 
-    def _get_with_proxy_fallback(self, url: str) -> requests.Response:
-        """GET with automatic proxy switching on 403/429 blocks.
+    def _rotate_ua(self) -> None:
+        """Pick a fresh User-Agent on the shared session."""
+        import random
+        from ..http_client import USER_AGENTS
+        self.client._session.headers["User-Agent"] = random.choice(USER_AGENTS)
 
-        500 = broken page on the server side (not IP-based blocking) — skip it
-        by re-raising immediately so the base scraper logs it as a normal error.
+    def _get_with_proxy_fallback(self, url: str) -> requests.Response:
+        """GET with retry-on-500 and proxy switching on 403/429 blocks.
+
+        500 = the Bitrix backend hiccups under rapid requests (the page opens
+        fine in a browser). Retry a few times with a fresh User-Agent and a
+        short pause before giving up.
         403/429 = we are being rate-limited/blocked — switch to proxy.
         """
-        try:
-            resp = self.client.get(url)
-            if self._using_proxy:
-                self._proxy_success += 1
-                if self._proxy_success >= _PROXY_RECOVER_AFTER:
-                    self._disable_proxy()
-            return resp
-        except requests.HTTPError as exc:
-            status = getattr(exc.response, "status_code", None)
-            if status in (403, 429):
-                self._consecutive_blocks += 1
-                if (not self._using_proxy
-                        and self._proxy_url
-                        and self._consecutive_blocks >= _CONSECUTIVE_500_THRESHOLD):
-                    self._enable_proxy()
-                    return self.client.get(url)
-            raise
+        import time
+        last_exc: Exception | None = None
+        for attempt in range(_RETRY_500_ATTEMPTS):
+            try:
+                resp = self.client.get(url, force_refresh=(attempt > 0))
+                if self._using_proxy:
+                    self._proxy_success += 1
+                    if self._proxy_success >= _PROXY_RECOVER_AFTER:
+                        self._disable_proxy()
+                return resp
+            except requests.HTTPError as exc:
+                status = getattr(exc.response, "status_code", None)
+                last_exc = exc
+                if status == 500:
+                    # transient server error — rotate UA, pause, retry
+                    self._rotate_ua()
+                    time.sleep(2 * (attempt + 1))
+                    continue
+                if status in (403, 429):
+                    self._consecutive_blocks += 1
+                    if (not self._using_proxy
+                            and self._proxy_url
+                            and self._consecutive_blocks >= _CONSECUTIVE_500_THRESHOLD):
+                        self._enable_proxy()
+                        return self.client.get(url, force_refresh=True)
+                raise
+        # all retries exhausted
+        raise last_exc  # type: ignore[misc]
 
     def discover(self) -> list[str]:
         # Single sentinel; product URLs come from the sitemap in fetch_listing.
