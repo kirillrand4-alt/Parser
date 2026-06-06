@@ -102,12 +102,53 @@ class HttpClient:
         self._session.headers.update(DEFAULT_HEADERS)
         self._session.headers["User-Agent"] = random.choice(USER_AGENTS)
 
+        # Proxy config (optional). Global PROXY / PROXY_REFRESH, or per-site
+        # PROXY__<SITE> / PROXY_REFRESH__<SITE> (dots/dashes → underscores).
+        # The proxy is only switched on after repeated non-404 HTTP errors, so
+        # well-behaved pages never consume proxy traffic.
+        key = site_name.replace(".", "_").replace("-", "_").upper()
+        self._proxy_url = os.getenv(f"PROXY__{key}") or os.getenv("PROXY") or ""
+        self._proxy_refresh = (os.getenv(f"PROXY_REFRESH__{key}")
+                               or os.getenv("PROXY_REFRESH") or "")
+        self._using_proxy = False
+        # Retry knobs
+        self._retry_attempts = int(os.getenv("HTTP_RETRY_ATTEMPTS", "3"))
+
     def _throttle(self) -> None:
         elapsed = time.monotonic() - self._last_request
         delay = random.uniform(self.delay_min, self.delay_max)
         if elapsed < delay:
             time.sleep(delay - elapsed)
         self._last_request = time.monotonic()
+
+    def _rotate_ua(self) -> None:
+        self._session.headers["User-Agent"] = random.choice(USER_AGENTS)
+
+    def _enable_proxy(self) -> None:
+        if not self._proxy_url or self._using_proxy:
+            return
+        if self._proxy_refresh:
+            try:
+                requests.get(self._proxy_refresh, timeout=10)
+                time.sleep(3)  # let provider rotate the exit IP
+            except Exception:
+                pass
+        self._session.proxies.update({"http": self._proxy_url, "https": self._proxy_url})
+        self._using_proxy = True
+        import logging as _l
+        _l.getLogger(__name__).info("[%s] switched to PROXY", self.site_name)
+
+    def _raw_get(self, url, params, headers, timeout, force_refresh, **kwargs):
+        if force_refresh:
+            with self._session.cache_disabled():
+                self._throttle()
+                return self._session.get(url, params=params, headers=headers,
+                                         timeout=timeout, **kwargs)
+        from_cache = self._session.cache.contains(url=url)
+        if not from_cache:
+            self._throttle()
+        return self._session.get(url, params=params, headers=headers,
+                                 timeout=timeout, **kwargs)
 
     @retry(
         retry=retry_if_exception_type((requests.ConnectionError, requests.Timeout)),
@@ -124,17 +165,35 @@ class HttpClient:
         force_refresh: bool = False,
         **kwargs: Any,
     ) -> requests.Response:
-        if force_refresh:
-            with self._session.cache_disabled():
-                self._throttle()
-                resp = self._session.get(url, params=params, headers=headers, timeout=timeout, **kwargs)
-        else:
-            from_cache = self._session.cache.contains(url=url)
-            if not from_cache:
-                self._throttle()
-            resp = self._session.get(url, params=params, headers=headers, timeout=timeout, **kwargs)
-        resp.raise_for_status()
-        return resp
+        # Fresh UA per request so requests don't share one fingerprint.
+        self._rotate_ua()
+        last_exc: requests.HTTPError | None = None
+        for attempt in range(self._retry_attempts):
+            resp = self._raw_get(url, params, headers, timeout,
+                                  force_refresh or attempt > 0, **kwargs)
+            try:
+                resp.raise_for_status()
+                return resp
+            except requests.HTTPError as exc:
+                status = getattr(exc.response, "status_code", None)
+                # 404 = page genuinely gone — skip immediately, no retry/proxy.
+                if status == 404:
+                    raise
+                last_exc = exc
+                # Any other HTTP error: rotate UA, pause, retry. On the final
+                # local attempt switch to proxy (if configured) for one more try.
+                self._rotate_ua()
+                if (attempt == self._retry_attempts - 1
+                        and self._proxy_url and not self._using_proxy):
+                    self._enable_proxy()
+                    try:
+                        resp = self._raw_get(url, params, headers, timeout, True, **kwargs)
+                        resp.raise_for_status()
+                        return resp
+                    except requests.HTTPError:
+                        raise last_exc
+                time.sleep(2 * (attempt + 1))
+        raise last_exc  # type: ignore[misc]
 
     def close(self) -> None:
         self._session.close()

@@ -33,13 +33,6 @@ from ..sitemap import collect_product_urls
 
 logger = logging.getLogger(__name__)
 
-# Switch to proxy after this many consecutive 500s
-_CONSECUTIVE_500_THRESHOLD = int(os.getenv("PNEVMO_SKLAD_500_THRESHOLD", "3"))
-# After this many successful proxy requests, try going direct again
-_PROXY_RECOVER_AFTER = int(os.getenv("PNEVMO_SKLAD_PROXY_RECOVER", "50"))
-# How many times to retry a 500 (with fresh UA + pause) before skipping the page
-_RETRY_500_ATTEMPTS = int(os.getenv("PNEVMO_SKLAD_RETRY_500", "3"))
-
 BASE = "https://www.pnevmo-sklad.ru"
 SITEMAP = "https://www.pnevmo-sklad.ru/sitemap.xml"
 
@@ -74,97 +67,20 @@ class PnevmoSkladScraper(BaseScraper):
     delay_min = 0.3
     delay_max = 0.5
 
+    # Retry-with-proxy + per-request UA rotation now live in HttpClient.get and
+    # apply to every site. Configure the proxy with PROXY__PNEVMO_SKLAD_RU (or
+    # the legacy PNEVMO_SKLAD_PROXY, mapped in __init__ for backward compat).
+
     def __init__(self) -> None:
+        # Map the legacy per-site env names onto the generic PROXY__<SITE> ones
+        # the HttpClient reads, so existing Colab cells keep working.
+        legacy = os.getenv("PNEVMO_SKLAD_PROXY")
+        if legacy and not os.getenv("PROXY__PNEVMO_SKLAD_RU"):
+            os.environ["PROXY__PNEVMO_SKLAD_RU"] = legacy
+        legacy_ref = os.getenv("PNEVMO_SKLAD_PROXY_REFRESH")
+        if legacy_ref and not os.getenv("PROXY_REFRESH__PNEVMO_SKLAD_RU"):
+            os.environ["PROXY_REFRESH__PNEVMO_SKLAD_RU"] = legacy_ref
         super().__init__()
-        self._proxy_url = os.getenv("PNEVMO_SKLAD_PROXY", "")
-        self._proxy_refresh = os.getenv("PNEVMO_SKLAD_PROXY_REFRESH", "")
-        self._using_proxy = False
-        self._consecutive_blocks = 0
-        self._proxy_success = 0
-
-    def _enable_proxy(self) -> None:
-        if not self._proxy_url or self._using_proxy:
-            return
-        # Refresh IP before switching (avoid reusing a burned IP)
-        if self._proxy_refresh:
-            try:
-                requests.get(self._proxy_refresh, timeout=10)
-                time.sleep(3)  # give provider a moment to rotate
-                logger.info("[pnevmo-sklad] proxy IP refreshed")
-            except Exception as exc:
-                logger.warning("[pnevmo-sklad] proxy IP refresh failed: %s", exc)
-        proxies = {"http": self._proxy_url, "https": self._proxy_url}
-        self.client._session.proxies.update(proxies)
-        self._using_proxy = True
-        self._proxy_success = 0
-        logger.info("[pnevmo-sklad] switched to PROXY after %d consecutive 500s",
-                    self._consecutive_blocks)
-
-    def _disable_proxy(self) -> None:
-        if not self._using_proxy:
-            return
-        self.client._session.proxies.clear()
-        self._using_proxy = False
-        self._consecutive_blocks = 0
-        logger.info("[pnevmo-sklad] back to DIRECT after %d proxy successes",
-                    _PROXY_RECOVER_AFTER)
-
-    def _rotate_ua(self) -> None:
-        """Pick a fresh User-Agent on the shared session."""
-        import random
-        from ..http_client import USER_AGENTS
-        self.client._session.headers["User-Agent"] = random.choice(USER_AGENTS)
-
-    def _get_with_proxy_fallback(self, url: str) -> requests.Response:
-        """GET with retry-on-500 and proxy switching on 403/429 blocks.
-
-        500 = the Bitrix backend hiccups under rapid requests (the page opens
-        fine in a browser). Retry a few times with a fresh User-Agent and a
-        short pause before giving up.
-        403/429 = we are being rate-limited/blocked — switch to proxy.
-        """
-        import time
-        last_exc: Exception | None = None
-        # Fresh UA per page so requests don't all share one fingerprint.
-        self._rotate_ua()
-        for attempt in range(_RETRY_500_ATTEMPTS):
-            try:
-                resp = self.client.get(url, force_refresh=(attempt > 0))
-                if self._using_proxy:
-                    self._proxy_success += 1
-                    if self._proxy_success >= _PROXY_RECOVER_AFTER:
-                        self._disable_proxy()
-                return resp
-            except requests.HTTPError as exc:
-                status = getattr(exc.response, "status_code", None)
-                last_exc = exc
-                if status == 500:
-                    # transient server error — rotate UA, pause, retry
-                    self._rotate_ua()
-                    time.sleep(2 * (attempt + 1))
-                    continue
-                if status in (403, 429):
-                    self._consecutive_blocks += 1
-                    if (not self._using_proxy
-                            and self._proxy_url
-                            and self._consecutive_blocks >= _CONSECUTIVE_500_THRESHOLD):
-                        self._enable_proxy()
-                        return self.client.get(url, force_refresh=True)
-                raise
-        # Direct retries exhausted (still 500). Last resort: try once through the
-        # proxy with a fresh UA — a different exit IP may not hit the broken path.
-        if self._proxy_url and not self._using_proxy:
-            logger.info("[pnevmo-sklad] 500 persists after %d tries — trying via PROXY: %s",
-                        _RETRY_500_ATTEMPTS, url)
-            self._enable_proxy()
-            self._rotate_ua()
-            try:
-                resp = self.client.get(url, force_refresh=True)
-                self._proxy_success += 1
-                return resp
-            except requests.HTTPError:
-                pass  # give up — fall through to raise
-        raise last_exc  # type: ignore[misc]
 
     def discover(self) -> list[str]:
         # Single sentinel; product URLs come from the sitemap in fetch_listing.
@@ -200,7 +116,7 @@ class PnevmoSkladScraper(BaseScraper):
         return urls
 
     def parse_product(self, url: str) -> Optional[Product]:
-        resp = self._get_with_proxy_fallback(url)
+        resp = self.client.get(url)
         soup = BeautifulSoup(resp.content, "lxml")
         page_text = soup.get_text(" ", strip=True)
 
