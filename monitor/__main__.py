@@ -48,12 +48,15 @@ def cli() -> None:
 @cli.command("scrape")
 @click.option("--site", default="all", show_default=True,
               help="Site to scrape: 'all' or domain name.")
+@click.option("--exclude", default="", show_default=True,
+              help="Comma-separated sites to skip, e.g. 'compressortyt.ru,v-p-k.ru'. "
+                   "Also reads EXCLUDE_SITES env var.")
 @click.option("--out", default=None, help="CSV output path (default: data/prices_<run_id>.csv)")
 @click.option("--db", default=str(DB_PATH), show_default=True, help="SQLite database path.")
 @click.option("--parallel/--sequential", default=True, show_default=True,
               help="Scrape sites concurrently (one thread per site, each keeps its own delay).")
 @click.option("--verbose", "-v", is_flag=True)
-def scrape_cmd(site: str, out: str | None, db: str, parallel: bool, verbose: bool) -> None:
+def scrape_cmd(site: str, exclude: str, out: str | None, db: str, parallel: bool, verbose: bool) -> None:
     """Scrape one or all competitor sites."""
     setup_logging(verbose)
     # Clear seed cache so each run re-reads CSVs fresh (cache persists across
@@ -63,13 +66,23 @@ def scrape_cmd(site: str, out: str | None, db: str, parallel: bool, verbose: boo
     run_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     csv_path = Path(out) if out else Path(f"{CSV_BASE}_{run_id}.csv")
 
+    # Collect sites to exclude (--exclude flag + EXCLUDE_SITES env var)
+    excluded: set[str] = set()
+    for s in (exclude + "," + os.getenv("EXCLUDE_SITES", "")).split(","):
+        s = s.strip()
+        if s:
+            excluded.add(s)
+
     if site == "all":
-        scrapers_to_run = list(ALL_SCRAPERS.keys())
+        scrapers_to_run = [s for s in ALL_SCRAPERS.keys() if s not in excluded]
     else:
         if site not in ALL_SCRAPERS:
             console.print(f"[red]Unknown site: {site}. Available: {list(ALL_SCRAPERS)}")
             sys.exit(1)
         scrapers_to_run = [site]
+
+    if excluded:
+        console.print(f"[yellow]Skipping: {sorted(excluded)}")
 
     use_parallel = parallel and len(scrapers_to_run) > 1
 
