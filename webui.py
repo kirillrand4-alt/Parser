@@ -432,7 +432,7 @@ def log_stream():
             try:
                 item = _log_queue.get(timeout=30)
             except queue.Empty:
-                yield "data: {\"line\": \"[ping]\"}\n\n"
+                yield ": keepalive\n\n"  # SSE comment — keeps connection alive, not shown in log
                 continue
             if item is None:
                 yield "data: {\"done\": true}\n\n"
