@@ -1,0 +1,190 @@
+<!DOCTYPE html><html lang=ru><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Cinzel:wght@600;700&display=swap" rel="stylesheet">
+<title>Ivory & Gold — Animated</title>
+<style>
+:root{
+ --bg:#f3ecdc; --panel1:#fffaf0; --panel2:#f6efe0;
+ --gold1:#b8902f; --gold2:#e6c878; --gold3:#fff1c9;
+ --txt:#3a2f1c; --dim:#9a8a6a; --logbg:#2a2418;
+ --danger:#9c3b3b; --border:rgba(184,144,47,.4);
+}
+*{box-sizing:border-box;margin:0}
+
+/* ── Animations ── */
+@keyframes card-in{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+@keyframes gold-shimmer{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
+@keyframes flourish-in{from{opacity:0;transform:scale(.7) rotate(-8deg)}to{opacity:.95;transform:scale(1) rotate(0)}}
+@keyframes sheen{0%{left:-120%}60%,100%{left:140%}}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
+@keyframes divider-grow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+
+body{
+ font-family:'Cormorant Garamond',serif;background:var(--bg);color:var(--txt);
+ min-height:100vh;padding:48px 20px;position:relative;overflow-x:hidden;
+ background-image:
+  radial-gradient(circle at 12% 8%,rgba(230,200,120,.18) 0,transparent 30%),
+  radial-gradient(circle at 88% 80%,rgba(184,144,47,.12) 0,transparent 35%);
+}
+.wrap{max-width:880px;margin:0 auto;position:relative;z-index:1}
+
+/* Title */
+.title{
+ font-family:'Cinzel',serif;font-weight:700;font-size:34px;letter-spacing:1.5px;
+ display:flex;gap:16px;align-items:center;justify-content:center;
+ margin-bottom:6px;color:var(--gold1);
+ text-shadow:0 1px 0 rgba(255,255,255,.6),0 2px 3px rgba(184,144,47,.2);
+ animation:card-in .6s ease both;
+}
+.title .orn{font-size:26px;color:var(--gold1);animation:flourish-in .8s ease .2s both}
+.badge{
+ font-family:'Cinzel',serif;font-size:11px;letter-spacing:3px;padding:6px 14px;border-radius:14px;
+ color:#fff;background:linear-gradient(135deg,var(--gold2),var(--gold1),var(--gold2));
+ background-size:200% 100%;animation:gold-shimmer 4s linear infinite;
+ box-shadow:0 2px 8px rgba(184,144,47,.4);
+}
+/* Decorative title divider with center flourish */
+.tdiv{display:flex;align-items:center;justify-content:center;gap:14px;margin:0 auto 30px;
+ max-width:420px;animation:card-in .7s ease .15s both}
+.tdiv .line{height:2px;flex:1;background:linear-gradient(90deg,transparent,var(--gold1));
+ transform-origin:right;animation:divider-grow .8s ease .3s both}
+.tdiv .line.r{background:linear-gradient(90deg,var(--gold1),transparent);transform-origin:left}
+.tdiv .dot{color:var(--gold1);font-size:18px}
+
+/* Cards */
+.card{
+ position:relative;background:linear-gradient(180deg,var(--panel1),var(--panel2));
+ border:1px solid var(--border);border-radius:10px;padding:30px 34px;margin-bottom:26px;
+ box-shadow:0 8px 30px rgba(120,90,30,.15),inset 0 0 0 1px rgba(255,255,255,.5),
+  inset 0 0 50px rgba(230,200,120,.12);
+ animation:card-in .6s ease both;
+}
+.card:nth-of-type(1){animation-delay:.1s}
+.card:nth-of-type(2){animation-delay:.2s}
+.card:nth-of-type(3){animation-delay:.3s}
+
+/* Corner filigree (4 corners) */
+.corner{position:absolute;width:48px;height:48px;background-size:contain;
+ background-repeat:no-repeat;opacity:.9;pointer-events:none;animation:flourish-in .7s ease both}
+.corner.tl{top:7px;left:7px}
+.corner.tr{top:7px;right:7px;transform:scaleX(-1)}
+.corner.bl{bottom:7px;left:7px;transform:scaleY(-1)}
+.corner.br{bottom:7px;right:7px;transform:scale(-1)}
+
+label{font-family:'Cinzel',serif;font-weight:600;display:block;margin-bottom:12px;
+ letter-spacing:1.5px;font-size:13px;text-transform:uppercase;color:var(--gold1)}
+
+select,input[type=text]{font-family:'Cormorant Garamond',serif;background:#fffdf6;color:var(--txt);
+ border:1px solid var(--gold1);border-radius:8px;padding:11px 16px;font-size:18px;min-width:280px;
+ transition:box-shadow .2s,border-color .2s}
+select:focus,input:focus{outline:none;box-shadow:0 0 0 3px rgba(230,200,120,.45)}
+
+.radio-group{display:flex;gap:28px;margin:18px 0;font-size:18px;color:#6a5c3c}
+.radio-group label{font-family:'Cormorant Garamond',serif;font-weight:500;text-transform:none;
+ letter-spacing:0;font-size:18px;display:flex;gap:9px;align-items:center;cursor:pointer;margin:0;color:#6a5c3c}
+input[type=radio]{accent-color:var(--gold1);width:16px;height:16px}
+
+/* Rounded gold buttons with sheen */
+.btn{font-family:'Cinzel',serif;border:none;font-weight:600;font-size:13px;letter-spacing:1px;
+ padding:13px 26px;border-radius:24px;margin-right:12px;cursor:pointer;position:relative;
+ overflow:hidden;transition:transform .18s,box-shadow .18s,filter .18s}
+.btn::after{content:'';position:absolute;top:0;left:-120%;width:55%;height:100%;
+ background:linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent);transform:skewX(-18deg)}
+.btn:hover::after{animation:sheen .7s ease}
+.btn:hover{transform:translateY(-2px);filter:brightness(1.06)}
+.btn:active{transform:translateY(0)}
+.btn-primary{color:#fff;
+ background:linear-gradient(135deg,var(--gold2) 0%,var(--gold1) 45%,#8f6f20 100%);
+ background-size:180% 100%;
+ box-shadow:0 4px 16px rgba(184,144,47,.5),inset 0 1px 0 rgba(255,255,255,.55)}
+.btn-primary:hover{background-position:100% 50%}
+.btn-secondary{color:var(--gold1);background:#fffdf6;border:1px solid var(--gold1);
+ box-shadow:inset 0 0 0 1px rgba(255,241,201,.8),0 2px 8px rgba(184,144,47,.15)}
+.btn-danger{color:#fff;background:linear-gradient(135deg,#b85050,var(--danger));
+ box-shadow:0 4px 14px rgba(156,59,59,.35),inset 0 1px 0 rgba(255,255,255,.25)}
+
+.status{margin-top:16px;font-size:17px;font-weight:600;color:var(--gold1);
+ display:flex;align-items:center;gap:9px}
+.status .dot{width:9px;height:9px;border-radius:50%;background:var(--gold1);
+ animation:blink 1.4s ease-in-out infinite;box-shadow:0 0 8px rgba(184,144,47,.6)}
+
+.log{background:var(--logbg);border:1px solid var(--gold1);border-radius:6px;padding:16px;
+ font:13px ui-monospace,monospace;color:#d8cba0;height:200px;overflow:auto}
+.log .ok{color:#caa85a}.log .warn{color:#e6c878}.log .err{color:#e08a8a}
+
+.files{list-style:none}.files li{display:flex;justify-content:space-between;padding:12px 6px;
+ font-size:18px;border-bottom:1px solid var(--border);border-radius:6px;transition:background .2s}
+.files li:hover{background:rgba(230,200,120,.12)}
+.files small{font-size:14px;color:var(--dim)}
+.files a{font-family:'Cinzel',serif;font-size:12px;text-decoration:none;font-weight:600;
+ letter-spacing:.5px;color:var(--gold1);transition:color .15s}
+.files a:hover{color:#8f6f20}
+.swatch{text-align:center;margin-top:14px;font:13px ui-monospace,monospace;color:var(--dim)}
+</style></head>
+<body>
+<div class="wrap">
+
+<h1 class="title"><span class="orn">❦</span> Parser <span class="badge">COMPRESSOR MONITOR</span> <span class="orn">❦</span></h1>
+<div class="tdiv"><span class="line"></span><span class="dot">✦</span><span class="line r"></span></div>
+
+<div class="card">
+  <div class="corner tl"></div><div class="corner tr"></div>
+  <div class="corner bl"></div><div class="corner br"></div>
+  <label>Сайт</label>
+  <select><option>all</option><option>pnevmo-sklad.ru</option><option>rutector.ru</option></select>
+  <div class="radio-group">
+    <label><input type="radio" name="m" checked> Продолжить с последнего места</label>
+    <label><input type="radio" name="m"> Скачать заново (с нуля)</label>
+  </div>
+  <div style="margin-top:18px">
+    <button class="btn btn-primary">▶ Запустить</button>
+    <button class="btn btn-danger">⏹ Остановить</button>
+  </div>
+  <div class="status"><span class="dot"></span>15% · 1671/11279 · 2.4s/prod · err=0</div>
+</div>
+
+<div class="card">
+  <div class="corner tl"></div><div class="corner tr"></div>
+  <div class="corner bl"></div><div class="corner br"></div>
+  <label>Журнал</label>
+  <div class="log"><div>pnevmo-sklad.ru : 36%| 3337/9326 [2.06prod/s, blocked=0, err=0]</div>
+<div class="ok">[pnevmo-sklad.ru] switched to PROXY</div>
+<div class="warn">[pnevmo-sklad.ru] HTTP 500 on /shop/oborudovanie/...</div>
+<div class="err">[pnevmo-sklad.ru] 3 consecutive blocks — stopping.</div>
+<div>pnevmo-sklad.ru : 37%| 3400/9326 [2.10prod/s, blocked=0, err=1]</div></div>
+</div>
+
+<div class="card">
+  <div class="corner tl"></div><div class="corner tr"></div>
+  <div class="corner bl"></div><div class="corner br"></div>
+  <label>Результаты (CSV)</label>
+  <ul class="files">
+    <li><span>prices_20260606.csv <small>1751 КБ · 8 240 стр.</small></span><a href="#">⬇ Скачать</a></li>
+    <li><span>prices_20260605.csv <small>409 КБ · 1 920 стр.</small></span><a href="#">⬇ Скачать</a></li>
+  </ul>
+  <div style="margin-top:14px">
+    <button class="btn btn-secondary">🔄 Обновить</button>
+    <button class="btn btn-primary">⬇ Общий список</button>
+    <button class="btn btn-danger">🗑 Очистить</button>
+  </div>
+</div>
+
+</div>
+<div class="swatch">Вариант: <b>Ivory & Gold — Animated</b></div>
+
+<script>
+// inject gold filigree SVG into every corner
+var svg="data:image/svg+xml,"+encodeURIComponent(
+ "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>"+
+ "<g fill='none' stroke='%23b8902f' stroke-width='2.2'>"+
+ "<path d='M4 96 L4 30 Q4 4 30 4 L96 4'/>"+
+ "<path d='M13 96 L13 33 Q13 13 33 13 L96 13'/>"+
+ "<path d='M13 52 Q34 52 34 31 Q34 13 52 13'/>"+
+ "<circle cx='24' cy='24' r='4.5' fill='%23b8902f'/>"+
+ "<path d='M24 96 Q24 68 42 58 Q56 50 52 36'/>"+
+ "<path d='M52 13 Q70 13 78 26'/>"+
+ "</g></svg>");
+document.querySelectorAll('.corner').forEach(function(c){c.style.backgroundImage="url('"+svg+"')"});
+</script>
+</body></html>
