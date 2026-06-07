@@ -1,0 +1,82 @@
+<!DOCTYPE html><html lang=ru><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>Terminal — зелёный 'хакерский' моно</title><style>
+*{box-sizing:border-box;margin:0}
+body{font-family:'JetBrains Mono',ui-monospace,monospace;color:#b8f5c8;background:#0a0f0a;
+ padding:40px 20px;min-height:100vh;
+ background-image:linear-gradient(rgba(0,255,100,.03) 1px,transparent 1px),
+  linear-gradient(90deg,rgba(0,255,100,.03) 1px,transparent 1px);background-size:24px 24px}
+.wrap{max-width:880px;margin:0 auto}
+.title{font-weight:700;font-size:26px;display:flex;gap:14px;align-items:center;margin-bottom:26px;
+ color:#3dff7a;text-shadow:0 0 12px rgba(61,255,122,.5)}
+.badge{font-size:12px;color:#0a0f0a;background:#3dff7a;padding:5px 11px;border-radius:3px;
+ box-shadow:0 0 14px rgba(61,255,122,.6)}
+.card{background:#0d140d;border:1px solid #1d3d24;border-radius:6px;padding:22px;margin-bottom:18px;
+ box-shadow:0 0 0 1px rgba(61,255,122,.08),0 8px 30px rgba(0,0,0,.6)}
+label{font-weight:600;display:block;margin-bottom:10px;color:#3dff7a;text-transform:uppercase;
+ font-size:13px;letter-spacing:1px}
+small{color:#5a8a66}
+select,input[type=text]{background:#0a0f0a;color:#b8f5c8;border:1px solid #1d3d24;border-radius:4px;
+ padding:11px 14px;font-size:14px;min-width:260px;font-family:inherit}
+.radio-group{display:flex;gap:24px;margin:16px 0;color:#6aaa78}
+.radio-group label{font-weight:400;display:flex;gap:8px;align-items:center;cursor:pointer;
+ text-transform:none;letter-spacing:0;font-size:14px}
+input[type=radio]{accent-color:#3dff7a}
+.btn{background:#0a0f0a;border:1px solid #3dff7a;color:#3dff7a;font:700 14px inherit;
+ padding:12px 22px;border-radius:4px;margin-right:10px;cursor:pointer;transition:.12s;text-transform:uppercase}
+.btn-primary{background:#3dff7a;color:#0a0f0a;box-shadow:0 0 18px rgba(61,255,122,.5)}
+.btn-danger{border-color:#ff4d4d;color:#ff4d4d}
+.btn-secondary{border-color:#2d9cdb;color:#2d9cdb}
+.btn:hover{box-shadow:0 0 22px currentColor;filter:brightness(1.15)}
+.btn:active{transform:translateY(2px)}
+.status{margin-top:14px;font-size:14px;color:#3dff7a}
+.log{background:#050805;border:1px solid #1d3d24;border-radius:4px;padding:16px;font-size:13px;
+ color:#8ad99a;height:200px;overflow:auto}
+.log .ok{color:#3dff7a}.log .warn{color:#ffe14d}.log .err{color:#ff5c5c}
+.files{list-style:none}.files li{display:flex;justify-content:space-between;padding:10px 0;
+ border-bottom:1px solid #1d3d24}
+.files a{color:#3dff7a;text-decoration:none}
+.swatch{text-align:center;color:#5a8a66;margin-top:10px;font-size:13px}
+</style></head>
+<body><div class=wrap>
+<h1 class="title">🔧 Parser <span class="badge">COMPRESSOR MONITOR</span></h1>
+
+<div class="card">
+  <label>Сайт</label>
+  <select>
+    <option>all</option><option>pnevmo-sklad.ru</option><option>rutector.ru</option>
+  </select>
+  <div class="radio-group">
+    <label><input type="radio" name="m" checked> Продолжить с последнего места</label>
+    <label><input type="radio" name="m"> Скачать заново (с нуля)</label>
+  </div>
+  <div style="margin-top:18px">
+    <button class="btn btn-primary">▶ Запустить</button>
+    <button class="btn btn-danger">⏹ Остановить</button>
+  </div>
+  <div class="status">15% · 1671/11279 · 2.4s/prod · err=0</div>
+</div>
+
+<div class="card">
+  <label>Лог</label>
+  <div class="log"><div>pnevmo-sklad.ru : 36%| 3337/9326 [2.06prod/s, blocked=0, err=0]</div>
+<div class="ok">[pnevmo-sklad.ru] switched to PROXY</div>
+<div class="warn">[pnevmo-sklad.ru] HTTP 500 on /shop/oborudovanie/...</div>
+<div class="err">[pnevmo-sklad.ru] 3 consecutive blocks — stopping.</div>
+<div>pnevmo-sklad.ru : 37%| 3400/9326 [2.10prod/s, blocked=0, err=1]</div></div>
+</div>
+
+<div class="card">
+  <label>Результаты (CSV)</label>
+  <ul class="files">
+    <li><span>prices_20260606.csv <small>1751 КБ · 8 240 стр.</small></span><a href="#">⬇ Скачать</a></li>
+    <li><span>prices_20260605.csv <small>409 КБ · 1 920 стр.</small></span><a href="#">⬇ Скачать</a></li>
+  </ul>
+  <div style="margin-top:14px">
+    <button class="btn btn-secondary">🔄 Обновить</button>
+    <button class="btn btn-primary">⬇ Общий список</button>
+    <button class="btn btn-danger">🗑 Очистить</button>
+  </div>
+</div>
+</div>
+<div class=swatch>Вариант: <b>Terminal — зелёный 'хакерский' моно</b></div></body></html>
