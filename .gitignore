@@ -21,6 +21,9 @@ cache/*.checkpoint.json
 .env.*
 !.env.example
 
+# Runtime settings (proxy credentials etc — never commit)
+.runtime_settings.json
+
 # Editor
 .idea/
 .vscode/

@@ -72,9 +72,20 @@ _proc: subprocess.Popen | None = None
 _log_queue: queue.Queue = queue.Queue()
 _proc_lock = threading.Lock()
 
-# Runtime env overrides (never written to disk or git).
+# Runtime env overrides — persisted to .runtime_settings.json (gitignored).
 # Injected into subprocess env on each /start call.
-_runtime_env: dict[str, str] = {}
+_SETTINGS_FILE = Path(__file__).parent / ".runtime_settings.json"
+
+def _load_runtime_env() -> dict:
+    try:
+        return json.loads(_SETTINGS_FILE.read_text())
+    except Exception:
+        return {}
+
+def _save_runtime_env(d: dict) -> None:
+    _SETTINGS_FILE.write_text(json.dumps(d, ensure_ascii=False, indent=2))
+
+_runtime_env: dict[str, str] = _load_runtime_env()
 
 HTML = """
 <!DOCTYPE html>
@@ -399,6 +410,7 @@ def settings():
                 _runtime_env[env_name] = v
             else:
                 _runtime_env.pop(env_name, None)
+        _save_runtime_env(_runtime_env)
         return jsonify({"ok": True})
 
     site = (request.args.get("site") or "").strip()
