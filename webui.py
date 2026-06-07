@@ -89,8 +89,10 @@ _runtime_env: dict[str, str] = _load_runtime_env()
 
 HTML = """
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="ru" data-theme="aurora">
 <head>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Cinzel:wght@600;700&display=swap" rel="stylesheet">
 <meta charset="utf-8">
 <title>Parser UI</title>
 <style>
@@ -116,16 +118,140 @@ HTML = """
     to   { opacity:1; transform:translateY(0); }
   }
   @keyframes glow-pulse {
-    0%,100% { box-shadow: 0 6px 20px rgba(124,108,255,.5); }
-    50%     { box-shadow: 0 6px 30px rgba(124,108,255,.85), 0 0 60px rgba(124,108,255,.25); }
+    0%,100% { box-shadow: 0 6px 20px var(--primary-glow); }
+    50%     { box-shadow: 0 6px 30px var(--primary-glow), 0 0 60px var(--primary-glow); }
   }
   @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+  @keyframes gold-shimmer { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
+  @keyframes flourish-in { from{opacity:0;transform:scale(.7) rotate(-8deg)} to{opacity:.92;transform:scale(1) rotate(0)} }
+
+  /* ════ THEME: Aurora Glass (default) ════ */
+  :root {
+    --font-body: 'Inter', system-ui, -apple-system, sans-serif;
+    --font-head: 'Inter', system-ui, sans-serif;
+    --bg: #07090f;
+    --bg-image: none;
+    --text: #e8ecf4;
+    --dim: #8b97b5;
+    --text-dim: #8b97b5;
+    --orb-display: block;
+    --corner-display: none;
+    --card-bg: rgba(255,255,255,.045);
+    --card-blur: 20px;
+    --card-border: rgba(255,255,255,.10);
+    --card-border-hover: rgba(255,255,255,.18);
+    --card-radius: 20px;
+    --card-shadow: 0 12px 40px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.08);
+    --card-shadow-hover: 0 16px 48px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.14);
+    --label-color: #e8ecf4;
+    --label-transform: none;
+    --label-spacing: normal;
+    --input-bg: rgba(0,0,0,.35);
+    --input-border: rgba(255,255,255,.15);
+    --input-text: #e8ecf4;
+    --input-radius: 12px;
+    --input-font: var(--font-body);
+    --input-size: 15px;
+    --accent: #7c9cff;
+    --accent-soft: rgba(124,156,255,.2);
+    --btn-radius: 14px;
+    --btn-font: var(--font-body);
+    --btn-size: 15px;
+    --btn-spacing: normal;
+    --primary-grad: linear-gradient(135deg, #7c9cff, #a06cff);
+    --primary-glow: rgba(124,108,255,.5);
+    --primary-text: #fff;
+    --red-grad: linear-gradient(135deg, #ff6b8a, #ff4757);
+    --green-grad: linear-gradient(135deg, #2bd9a0, #1aac7a);
+    --secondary-bg: rgba(255,255,255,.1);
+    --secondary-border: rgba(255,255,255,.2);
+    --secondary-text: #fff;
+    --status-color: #7c9cff;
+    --log-bg: rgba(0,0,0,.45);
+    --log-border: rgba(255,255,255,.1);
+    --log-text: #c9d4e8;
+    --badge-bg: rgba(124,156,255,.12);
+    --badge-color: #7c9cff;
+    --badge-border: rgba(124,156,255,.35);
+    --list-border: rgba(255,255,255,.08);
+    --list-hover: rgba(255,255,255,.04);
+    --link: #7c9cff;
+    --link-hover: #a5bcff;
+  }
+
+  /* ════ THEME: Ivory & Gold ════ */
+  html[data-theme="ivory"] {
+    --font-body: 'Cormorant Garamond', serif;
+    --font-head: 'Cinzel', serif;
+    --bg: #f3ecdc;
+    --bg-image: radial-gradient(circle at 12% 8%, rgba(230,200,120,.18) 0, transparent 30%),
+                radial-gradient(circle at 88% 80%, rgba(184,144,47,.12) 0, transparent 35%);
+    --text: #3a2f1c;
+    --dim: #9a8a6a;
+    --text-dim: #9a8a6a;
+    --orb-display: none;
+    --corner-display: block;
+    --card-bg: linear-gradient(180deg, #fffaf0, #f6efe0);
+    --card-blur: 0px;
+    --card-border: rgba(184,144,47,.4);
+    --card-border-hover: rgba(184,144,47,.7);
+    --card-radius: 10px;
+    --card-shadow: 0 8px 30px rgba(120,90,30,.15), inset 0 0 0 1px rgba(255,255,255,.5), inset 0 0 50px rgba(230,200,120,.12);
+    --card-shadow-hover: 0 12px 36px rgba(120,90,30,.22), inset 0 0 0 1px rgba(255,255,255,.6), inset 0 0 50px rgba(230,200,120,.18);
+    --label-color: #b8902f;
+    --label-transform: uppercase;
+    --label-spacing: 1.5px;
+    --input-bg: #fffdf6;
+    --input-border: #b8902f;
+    --input-text: #3a2f1c;
+    --input-radius: 8px;
+    --input-size: 17px;
+    --accent: #b8902f;
+    --accent-soft: rgba(230,200,120,.45);
+    --btn-radius: 24px;
+    --btn-size: 13px;
+    --btn-spacing: 1px;
+    --primary-grad: linear-gradient(135deg, #e6c878 0%, #b8902f 45%, #8f6f20 100%);
+    --primary-glow: rgba(184,144,47,.45);
+    --primary-text: #fff;
+    --red-grad: linear-gradient(135deg, #b85050, #9c3b3b);
+    --green-grad: linear-gradient(135deg, #caa85a, #b8902f);
+    --secondary-bg: #fffdf6;
+    --secondary-border: #b8902f;
+    --secondary-text: #b8902f;
+    --status-color: #b8902f;
+    --log-bg: #2a2418;
+    --log-border: #b8902f;
+    --log-text: #d8cba0;
+    --badge-bg: linear-gradient(135deg, #e6c878, #b8902f, #e6c878);
+    --badge-color: #fff;
+    --badge-border: transparent;
+    --list-border: rgba(184,144,47,.4);
+    --list-hover: rgba(230,200,120,.12);
+    --link: #b8902f;
+    --link-hover: #8f6f20;
+  }
+  html[data-theme="ivory"] .badge { background-size: 200% 100%; animation: gold-shimmer 4s linear infinite; }
+  html[data-theme="ivory"] h1 { justify-content: center; }
+  html[data-theme="ivory"] .btn { font-weight: 600; }
 
   body {
-    font-family: 'Inter', system-ui, -apple-system, sans-serif;
-    color: #e8ecf4; min-height: 100vh;
+    font-family: var(--font-body);
+    color: var(--text); min-height: 100vh;
     padding: 40px 20px 60px;
-    background: #07090f; overflow-x: hidden; position: relative;
+    background: var(--bg); background-image: var(--bg-image);
+    overflow-x: hidden; position: relative;
+    transition: background-color .4s, color .4s;
+  }
+
+  /* Theme switcher (top-right) */
+  .theme-switch {
+    position: fixed; top: 14px; right: 16px; z-index: 60;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .theme-switch select {
+    min-width: 0; font-size: 13px; padding: 7px 10px;
+    border-radius: 10px; cursor: pointer;
   }
 
   /* Floating aurora orbs */
@@ -149,25 +275,30 @@ HTML = """
     animation: float-orb-3 16s ease-in-out infinite;
   }
 
+  .orb { display: var(--orb-display); }
+
   .wrap { max-width: 920px; margin: 0 auto; position: relative; z-index: 1; }
 
   h1 {
-    font-weight: 800; font-size: 30px; letter-spacing: -.5px;
+    font-family: var(--font-head);
+    font-weight: 800; font-size: 30px; letter-spacing: .5px;
     display: flex; align-items: center; gap: 12px; margin-bottom: 26px;
+    color: var(--label-color);
     animation: card-in .6s ease both;
   }
   h1 .badge {
-    font-family: ui-monospace, monospace; font-size: 12px; font-weight: 600;
-    color: #7c9cff; background: rgba(124,156,255,.12);
-    border: 1px solid rgba(124,156,255,.35); padding: 5px 11px; border-radius: 20px;
+    font-family: var(--font-head); font-size: 12px; font-weight: 600; letter-spacing: 1px;
+    color: var(--badge-color); background: var(--badge-bg);
+    border: 1px solid var(--badge-border); padding: 5px 12px; border-radius: 20px;
   }
 
   .card {
-    background: rgba(255,255,255,.045);
-    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-    border: 1px solid rgba(255,255,255,.10); border-radius: 20px;
+    position: relative;
+    background: var(--card-bg);
+    backdrop-filter: blur(var(--card-blur)); -webkit-backdrop-filter: blur(var(--card-blur));
+    border: 1px solid var(--card-border); border-radius: var(--card-radius);
     padding: 24px; margin-bottom: 20px;
-    box-shadow: 0 12px 40px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.08);
+    box-shadow: var(--card-shadow);
     transition: border-color .3s, box-shadow .3s;
     animation: card-in .6s ease both;
   }
@@ -176,90 +307,102 @@ HTML = """
   .card:nth-child(4) { animation-delay: .24s; }
   .card:nth-child(5) { animation-delay: .32s; }
   .card:hover {
-    border-color: rgba(255,255,255,.18);
-    box-shadow: 0 16px 48px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.14);
+    border-color: var(--card-border-hover);
+    box-shadow: var(--card-shadow-hover);
   }
 
-  label { font-weight: 600; display: block; margin-bottom: 8px; color: #e8ecf4; }
-  small { color: #8b97b5; }
+  /* Gold filigree corners (Ivory theme only; injected by JS) */
+  .corner {
+    position: absolute; width: 46px; height: 46px;
+    background-size: contain; background-repeat: no-repeat;
+    display: var(--corner-display); opacity: .9; pointer-events: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='none' stroke='%23b8902f' stroke-width='2.2'%3E%3Cpath d='M4 96 L4 30 Q4 4 30 4 L96 4'/%3E%3Cpath d='M13 96 L13 33 Q13 13 33 13 L96 13'/%3E%3Cpath d='M13 52 Q34 52 34 31 Q34 13 52 13'/%3E%3Ccircle cx='24' cy='24' r='4.5' fill='%23b8902f'/%3E%3Cpath d='M24 96 Q24 68 42 58 Q56 50 52 36'/%3E%3Cpath d='M52 13 Q70 13 78 26'/%3E%3C/g%3E%3C/svg%3E");
+    animation: flourish-in .7s ease both;
+  }
+  .corner.tl { top: 7px; left: 7px; }
+  .corner.tr { top: 7px; right: 7px; transform: scaleX(-1); }
+  .corner.bl { bottom: 7px; left: 7px; transform: scaleY(-1); }
+  .corner.br { bottom: 7px; right: 7px; transform: scale(-1); }
+
+  label {
+    font-family: var(--font-head); font-weight: 600; display: block; margin-bottom: 8px;
+    color: var(--label-color); text-transform: var(--label-transform); letter-spacing: var(--label-spacing);
+  }
+  small { color: var(--dim); }
 
   select, input[type=text], input[type=number] {
-    background: rgba(0,0,0,.35); color: #e8ecf4;
-    border: 1px solid rgba(255,255,255,.15); border-radius: 12px;
-    padding: 11px 14px; font-size: 15px; font-family: inherit;
+    background: var(--input-bg); color: var(--input-text);
+    border: 1px solid var(--input-border); border-radius: var(--input-radius);
+    padding: 11px 14px; font-size: var(--input-size); font-family: var(--font-body);
     transition: border-color .2s, box-shadow .2s;
   }
   select:focus, input:focus {
-    outline: none; border-color: #7c9cff;
-    box-shadow: 0 0 0 3px rgba(124,156,255,.2);
+    outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
   }
   select { cursor: pointer; min-width: 240px; }
 
   /* Buttons with shine sweep */
   .btn {
-    border: none; color: #fff; cursor: pointer;
-    font-size: 15px; font-weight: 700; font-family: inherit;
-    padding: 13px 24px; border-radius: 14px; margin-right: 10px;
+    border: none; color: var(--primary-text); cursor: pointer;
+    font-size: var(--btn-size); font-weight: 700; font-family: var(--font-head);
+    letter-spacing: var(--btn-spacing);
+    padding: 13px 24px; border-radius: var(--btn-radius); margin-right: 10px;
     transition: transform .15s, box-shadow .15s, filter .15s;
     position: relative; overflow: hidden;
   }
   .btn::after {
     content: ''; position: absolute; top: 0; left: -100%; width: 60%; height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(255,255,255,.18), transparent);
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,.3), transparent);
     transition: left .4s ease;
   }
   .btn:hover::after { left: 140%; }
-  .btn:hover:not(:disabled) { transform: translateY(-2px); filter: brightness(1.12); }
+  .btn:hover:not(:disabled) { transform: translateY(-2px); filter: brightness(1.08); }
   .btn:active { transform: translateY(1px); }
   .btn:disabled { opacity: .4; cursor: not-allowed; }
 
   /* btn-orange = primary start action */
   .btn-orange {
-    background: linear-gradient(135deg, #7c9cff, #a06cff);
+    background: var(--primary-grad); color: var(--primary-text);
+    box-shadow: 0 4px 16px var(--primary-glow), inset 0 1px 0 rgba(255,255,255,.4);
     animation: glow-pulse 3s ease-in-out infinite;
   }
-  .btn-orange:hover { animation: none; box-shadow: 0 8px 28px rgba(124,108,255,.7); }
+  .btn-orange:hover { animation: none; }
   .btn-orange:disabled { animation: none; }
 
-  .btn-red {
-    background: linear-gradient(135deg, #ff6b8a, #ff4757);
-    box-shadow: 0 6px 20px rgba(255,71,87,.4);
-  }
+  .btn-red { background: var(--red-grad); color: #fff; box-shadow: 0 4px 16px rgba(0,0,0,.2); }
   .btn-blue {
-    background: rgba(255,255,255,.1);
-    border: 1px solid rgba(255,255,255,.2);
+    background: var(--secondary-bg); color: var(--secondary-text);
+    border: 1px solid var(--secondary-border);
   }
-  .btn-green {
-    background: linear-gradient(135deg, #2bd9a0, #1aac7a);
-    box-shadow: 0 6px 20px rgba(43,217,160,.35);
-  }
+  .btn-green { background: var(--green-grad); color: var(--primary-text); box-shadow: 0 4px 16px var(--primary-glow); }
   a.btn { display: inline-block; text-decoration: none; }
 
   .radio-group { display: flex; gap: 24px; margin: 16px 0; }
   .radio-group label {
-    font-weight: 500; display: flex; align-items: center; gap: 8px;
-    cursor: pointer; color: #8b97b5; font-weight: normal;
+    font-family: var(--font-body); font-weight: normal; display: flex; align-items: center; gap: 8px;
+    cursor: pointer; color: var(--dim); text-transform: none; letter-spacing: normal;
   }
-  input[type=radio] { accent-color: #7c9cff; width: 16px; height: 16px; }
+  input[type=radio] { accent-color: var(--accent); width: 16px; height: 16px; }
 
   #status {
-    margin-top: 14px; font: 600 14px ui-monospace,monospace; color: #7c9cff;
+    margin-top: 14px; font: 600 14px var(--font-body); color: var(--status-color);
     display: flex; align-items: center; gap: 8px;
   }
   .status-dot {
-    width: 8px; height: 8px; border-radius: 50%; background: #7c9cff;
+    width: 8px; height: 8px; border-radius: 50%; background: var(--status-color);
     animation: blink 1.4s ease-in-out infinite; flex-shrink: 0;
   }
 
   #log {
-    background: rgba(0,0,0,.45); border: 1px solid rgba(255,255,255,.1);
+    background: var(--log-bg); border: 1px solid var(--log-border);
     border-radius: 14px; padding: 16px;
-    font: 13px ui-monospace,monospace; color: #c9d4e8;
+    font: 13px ui-monospace,monospace; color: var(--log-text);
     height: 440px; overflow-y: auto;
     white-space: pre-wrap; word-break: break-all;
   }
   #log::-webkit-scrollbar { width: 8px; }
-  #log::-webkit-scrollbar-thumb { background: #2d3848; border-radius: 4px; }
+  #log::-webkit-scrollbar-thumb { background: rgba(128,128,128,.4); border-radius: 4px; }
   .log-err  { color: #ff7c9c; }
   .log-warn { color: #ffd27c; }
   .log-ok   { color: #5ce0b0; }
@@ -267,20 +410,26 @@ HTML = """
   .files-list { list-style: none; padding: 0; margin: 0; }
   .files-list li {
     display: flex; justify-content: space-between; align-items: center;
-    padding: 10px 6px; border-bottom: 1px solid rgba(255,255,255,.08);
+    padding: 10px 6px; border-bottom: 1px solid var(--list-border);
     border-radius: 6px; transition: background .2s;
   }
-  .files-list li:hover { background: rgba(255,255,255,.04); }
+  .files-list li:hover { background: var(--list-hover); }
   .files-list li:last-child { border-bottom: none; }
-  .files-list a { color: #7c9cff; text-decoration: none; font-weight: 600; transition: color .15s; }
-  .files-list a:hover { color: #a5bcff; }
+  .files-list a { color: var(--link); text-decoration: none; font-weight: 600; font-family: var(--font-head); transition: color .15s; }
+  .files-list a:hover { color: var(--link-hover); }
   .files-list small { font-family: ui-monospace,monospace; }
 
-  details > summary { user-select: none; }
+  details > summary { user-select: none; color: var(--label-color); }
   details[open] > summary { margin-bottom: 8px; }
 </style>
 </head>
 <body>
+<div class="theme-switch">
+  <select id="theme" onchange="setTheme(this.value)" title="Тема оформления">
+    <option value="aurora">🌌 Aurora Glass</option>
+    <option value="ivory">👑 Ivory &amp; Gold</option>
+  </select>
+</div>
 <div class="orb orb-1"></div>
 <div class="orb orb-2"></div>
 <div class="orb orb-3"></div>
@@ -492,6 +641,30 @@ function saveSettings() {
 }
 
 document.getElementById('site').addEventListener('change', loadSettings);
+
+// ── Theme switcher ──
+function injectCorners() {
+  document.querySelectorAll('.card').forEach(card => {
+    if (card.querySelector('.corner')) return;  // already done
+    ['tl','tr','bl','br'].forEach(p => {
+      const d = document.createElement('div');
+      d.className = 'corner ' + p;
+      card.appendChild(d);
+    });
+  });
+}
+function setTheme(t) {
+  document.documentElement.dataset.theme = t;
+  try { localStorage.setItem('parserTheme', t); } catch(e) {}
+}
+injectCorners();
+(function initTheme(){
+  let t = 'aurora';
+  try { t = localStorage.getItem('parserTheme') || 'aurora'; } catch(e) {}
+  document.getElementById('theme').value = t;
+  setTheme(t);
+})();
+
 loadSettings();
 loadFiles();
 </script>
