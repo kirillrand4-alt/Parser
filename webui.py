@@ -94,33 +94,122 @@ HTML = """
 <meta charset="utf-8">
 <title>Parser UI</title>
 <style>
-  body { font-family: sans-serif; max-width: 860px; margin: 40px auto; padding: 0 20px; background: #f5f5f5; }
-  h1 { color: #333; }
-  .card { background: #fff; border-radius: 8px; padding: 24px; margin-bottom: 20px; box-shadow: 0 1px 4px rgba(0,0,0,.1); }
-  label { font-weight: 600; display: block; margin-bottom: 6px; }
-  select, .btn { padding: 10px 18px; border-radius: 5px; border: 1px solid #ccc; font-size: 15px; cursor: pointer; }
-  .btn { border: none; color: #fff; margin-right: 8px; }
-  .btn-green  { background: #28a745; }
-  .btn-orange { background: #fd7e14; }
-  .btn-red    { background: #dc3545; }
-  .btn-blue   { background: #007bff; }
-  .btn:disabled { opacity: .5; cursor: not-allowed; }
-  .radio-group { display: flex; gap: 20px; margin: 12px 0; }
-  .radio-group label { font-weight: normal; display: flex; align-items: center; gap: 6px; cursor: pointer; }
-  #log { background: #1e1e1e; color: #d4d4d4; font-family: monospace; font-size: 13px;
-         padding: 16px; border-radius: 6px; height: 420px; overflow-y: auto;
-         white-space: pre-wrap; word-break: break-all; }
-  .log-err  { color: #f48771; }
-  .log-warn { color: #dcdcaa; }
-  .log-ok   { color: #4ec9b0; }
-  #status { font-weight: 600; margin-top: 10px; }
-  .files-list { list-style: none; padding: 0; }
-  .files-list li { padding: 6px 0; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
-  .files-list a { color: #007bff; text-decoration: none; }
+  :root {
+    --bg:        #0f1419;
+    --bg-grad:   radial-gradient(1200px 600px at 50% -10%, #1c2530 0%, #0f1419 60%);
+    --card:      #1e2530;
+    --card-2:    #243040;
+    --border:    #2d3848;
+    --text:      #e6edf3;
+    --text-dim:  #8b98a8;
+    --orange:    #ff7a18;
+    --orange-2:  #e8590c;
+    --orange-sh: #b8430a;
+    --blue:      #2d9cdb;
+    --blue-2:    #1f7bb8;
+    --blue-sh:   #145a8a;
+    --green:     #2bb673;
+    --green-2:   #1e9c5e;
+    --green-sh:  #157346;
+    --red:       #e23b4e;
+    --red-2:     #c42435;
+    --red-sh:    #8f1825;
+    --mono: 'SF Mono', 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    max-width: 920px; margin: 0 auto; padding: 32px 20px 60px;
+    background: var(--bg-grad); background-attachment: fixed;
+    color: var(--text); min-height: 100vh;
+  }
+  h1 {
+    color: var(--text); font-weight: 800; letter-spacing: -.5px;
+    display: flex; align-items: center; gap: 12px; margin-bottom: 24px;
+  }
+  h1 .badge {
+    font-family: var(--mono); font-size: 12px; font-weight: 600;
+    color: var(--orange); background: rgba(255,122,24,.12);
+    border: 1px solid rgba(255,122,24,.3); padding: 4px 10px; border-radius: 6px;
+  }
+  .card {
+    background: linear-gradient(180deg, var(--card-2) 0%, var(--card) 100%);
+    border: 1px solid var(--border); border-radius: 12px;
+    padding: 22px 24px; margin-bottom: 18px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.04);
+  }
+  label { font-weight: 600; display: block; margin-bottom: 8px; color: var(--text); }
+  small, .dim { color: var(--text-dim); }
+
+  select, input[type=text], input[type=number] {
+    background: #11161d; color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 11px 14px; font-size: 15px; font-family: inherit;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  select:focus, input:focus {
+    outline: none; border-color: var(--orange);
+    box-shadow: 0 0 0 3px rgba(255,122,24,.15);
+  }
+  select { cursor: pointer; min-width: 240px; }
+
+  /* Physical 3D buttons — press down on click */
+  .btn {
+    position: relative; border: none; color: #fff; cursor: pointer;
+    font-size: 15px; font-weight: 700; font-family: inherit;
+    padding: 12px 22px; border-radius: 10px; margin-right: 10px;
+    transition: transform .08s ease, box-shadow .08s ease, filter .15s;
+    transform: translateY(0);
+  }
+  .btn:active { transform: translateY(4px); }
+  .btn-green  { background: linear-gradient(180deg, var(--green) 0%, var(--green-2) 100%);
+                box-shadow: 0 4px 0 var(--green-sh), 0 7px 14px rgba(0,0,0,.35); }
+  .btn-green:active  { box-shadow: 0 0 0 var(--green-sh), 0 2px 6px rgba(0,0,0,.3); }
+  .btn-orange { background: linear-gradient(180deg, var(--orange) 0%, var(--orange-2) 100%);
+                box-shadow: 0 4px 0 var(--orange-sh), 0 7px 14px rgba(0,0,0,.35); }
+  .btn-orange:active { box-shadow: 0 0 0 var(--orange-sh), 0 2px 6px rgba(0,0,0,.3); }
+  .btn-red    { background: linear-gradient(180deg, var(--red) 0%, var(--red-2) 100%);
+                box-shadow: 0 4px 0 var(--red-sh), 0 7px 14px rgba(0,0,0,.35); }
+  .btn-red:active    { box-shadow: 0 0 0 var(--red-sh), 0 2px 6px rgba(0,0,0,.3); }
+  .btn-blue   { background: linear-gradient(180deg, var(--blue) 0%, var(--blue-2) 100%);
+                box-shadow: 0 4px 0 var(--blue-sh), 0 7px 14px rgba(0,0,0,.35); }
+  .btn-blue:active   { box-shadow: 0 0 0 var(--blue-sh), 0 2px 6px rgba(0,0,0,.3); }
+  .btn:hover:not(:disabled) { filter: brightness(1.08); }
+  .btn:disabled { opacity: .4; cursor: not-allowed; transform: none !important;
+                  box-shadow: 0 4px 0 rgba(0,0,0,.3) !important; }
+
+  .radio-group { display: flex; gap: 24px; margin: 14px 0; }
+  .radio-group label { font-weight: 500; display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-dim); }
+  .radio-group input { accent-color: var(--orange); width: 16px; height: 16px; }
+
+  #log {
+    background: #0a0d12; color: #c9d4e0; font-family: var(--mono); font-size: 13px;
+    padding: 16px; border-radius: 10px; height: 440px; overflow-y: auto;
+    white-space: pre-wrap; word-break: break-all;
+    border: 1px solid var(--border); box-shadow: inset 0 2px 12px rgba(0,0,0,.5);
+  }
+  #log::-webkit-scrollbar { width: 10px; }
+  #log::-webkit-scrollbar-thumb { background: #2d3848; border-radius: 5px; }
+  .log-err  { color: #ff6b6b; }
+  .log-warn { color: #ffd166; }
+  .log-ok   { color: #2bd9a0; }
+  #status { font-weight: 600; margin-top: 12px; color: var(--text-dim); font-family: var(--mono); font-size: 14px; }
+
+  .files-list { list-style: none; padding: 0; margin: 0; }
+  .files-list li { padding: 10px 2px; border-bottom: 1px solid var(--border);
+                   display: flex; justify-content: space-between; align-items: center; }
+  .files-list li:last-child { border-bottom: none; }
+  .files-list a { color: var(--blue); text-decoration: none; font-weight: 600; }
+  .files-list a:hover { text-decoration: underline; }
+  .files-list small { font-family: var(--mono); }
+
+  details > summary { user-select: none; }
+  details[open] > summary { margin-bottom: 8px; }
+  a.btn { display: inline-block; text-decoration: none; }
 </style>
 </head>
 <body>
-<h1>🔧 Parser UI</h1>
+<h1>🔧 Parser <span class="badge">COMPRESSOR MONITOR</span></h1>
 
 <div class="card">
   <label>Сайт</label>
@@ -136,7 +225,7 @@ HTML = """
   </div>
 
   <div style="margin-top:16px;">
-    <button class="btn btn-green"  id="btnStart" onclick="startScrape()">▶ Запустить</button>
+    <button class="btn btn-orange" id="btnStart" onclick="startScrape()">▶ Запустить</button>
     <button class="btn btn-red"    id="btnStop"  onclick="stopScrape()" disabled>⏹ Остановить</button>
   </div>
   <div id="status">Готов к запуску.</div>
@@ -150,27 +239,27 @@ HTML = """
 <div class="card">
   <details id="advanced">
     <summary style="cursor:pointer;font-weight:600;font-size:16px;outline:none">⚙️ Подробные настройки</summary>
-    <p style="color:#666;font-size:13px">Применяются к выбранному выше сайту: <b id="cfgSite">—</b>.</p>
-    <div id="proxyWarning" style="display:none;background:#fff3cd;border:1px solid #ffc107;border-radius:4px;padding:8px 12px;font-size:13px;margin-bottom:8px">
+    <p style="color:var(--text-dim);font-size:13px">Применяются к выбранному выше сайту: <b id="cfgSite">—</b>.</p>
+    <div id="proxyWarning" style="display:none;background:rgba(255,209,102,.12);border:1px solid rgba(255,209,102,.4);color:#ffd166;border-radius:8px;padding:10px 14px;font-size:13px;margin-bottom:10px">
       ⚠️ <b>Прокси сохранён, но скрапер уже запущен.</b> Остановите его и запустите заново — только тогда прокси применится.
     </div>
-    <p style="color:#888;font-size:12px;margin:0 0 8px">Настройки хранятся только в памяти сервера. После перезапуска сервера нужно вводить заново. <b>Сохраните настройки ДО нажатия «Запустить».</b></p>
+    <p style="color:var(--text-dim);font-size:12px;margin:0 0 8px">Настройки сохраняются на сервере (вне git). <b>Сохраните настройки ДО нажатия «Запустить»</b> — они применяются при старте скрапера.</p>
 
     <div style="margin-top:12px">
       <div style="display:flex;gap:32px;flex-wrap:wrap">
         <div>
           <label style="font-size:13px">Задержка между запросами, сек</label>
           <div style="display:flex;gap:10px;align-items:center">
-            <input id="delayMin" type="number" step="0.1" min="0" placeholder="мин" style="width:90px;padding:8px;border:1px solid #ccc;border-radius:4px">
-            <span style="color:#888">—</span>
-            <input id="delayMax" type="number" step="0.1" min="0" placeholder="макс" style="width:90px;padding:8px;border:1px solid #ccc;border-radius:4px">
+            <input id="delayMin" type="number" step="0.1" min="0" placeholder="мин" style="width:90px;padding:8px;">
+            <span style="color:var(--text-dim)">—</span>
+            <input id="delayMax" type="number" step="0.1" min="0" placeholder="макс" style="width:90px;padding:8px;">
           </div>
         </div>
         <div>
           <label style="font-size:13px">Потоков (параллельных запросов)</label>
           <div style="display:flex;gap:8px;align-items:center">
-            <input id="workers" type="number" step="1" min="1" max="16" placeholder="1" style="width:70px;padding:8px;border:1px solid #ccc;border-radius:4px">
-            <small style="color:#888">1 = последовательно</small>
+            <input id="workers" type="number" step="1" min="1" max="16" placeholder="1" style="width:70px;padding:8px;">
+            <small style="color:var(--text-dim)">1 = последовательно</small>
           </div>
         </div>
       </div>
@@ -178,12 +267,12 @@ HTML = """
 
     <div style="display:grid;gap:10px;margin-top:14px;">
       <div>
-        <label style="font-size:13px">Прокси<br><small style="font-weight:normal;color:#888">http://user:pass@host:port или socks5://...</small></label>
-        <input id="proxyUrl" type="text" placeholder="http://..." style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:13px;box-sizing:border-box">
+        <label style="font-size:13px">Прокси<br><small style="font-weight:normal;color:var(--text-dim)">http://user:pass@host:port или socks5://...</small></label>
+        <input id="proxyUrl" type="text" placeholder="http://..." style="width:100%;padding:8px;font-size:13px;box-sizing:border-box">
       </div>
       <div>
-        <label style="font-size:13px">URL смены IP прокси<br><small style="font-weight:normal;color:#888">GET-запрос для ротации IP (опционально)</small></label>
-        <input id="proxyRefresh" type="text" placeholder="https://.../refresh-ip" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:13px;box-sizing:border-box">
+        <label style="font-size:13px">URL смены IP прокси<br><small style="font-weight:normal;color:var(--text-dim)">GET-запрос для ротации IP (опционально)</small></label>
+        <input id="proxyRefresh" type="text" placeholder="https://.../refresh-ip" style="width:100%;padding:8px;font-size:13px;box-sizing:border-box">
       </div>
     </div>
 
@@ -200,7 +289,7 @@ HTML = """
     <a id="btnMerge" class="btn btn-green" href="/download-all" style="text-decoration:none">⬇ Скачать общий список</a>
     <button class="btn btn-red" onclick="clearFiles()">🗑 Очистить все CSV</button>
   </div>
-  <div id="mergeInfo" style="font-size:13px;color:#666;margin-top:8px"></div>
+  <div id="mergeInfo" style="font-size:13px;color:var(--text-dim);margin-top:8px"></div>
 </div>
 
 <script>
@@ -281,7 +370,7 @@ function loadFiles() {
     files.forEach(f => {
       const li = document.createElement('li');
       const rows = f.rows > 0 ? ` · ${f.rows.toLocaleString('ru')} стр.` : '';
-      li.innerHTML = `<span>${f.name} <small style="color:#999">${f.size}${rows}</small></span>
+      li.innerHTML = `<span>${f.name} <small style="color:var(--text-dim)">${f.size}${rows}</small></span>
         <a href="/download/${encodeURIComponent(f.name)}">⬇ Скачать</a>`;
       ul.appendChild(li);
     });
