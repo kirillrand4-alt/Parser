@@ -1,0 +1,111 @@
+<!DOCTYPE html><html lang=ru><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Cinzel:wght@600;700&display=swap" rel="stylesheet">
+<title>Royal Purple — пурпур + золото (барокко)</title><style>
+*{box-sizing:border-box;margin:0}
+body{min-height:100vh;padding:48px 20px}
+.wrap{max-width:880px;margin:0 auto}
+.title{font-family:'Cinzel',serif;font-weight:700;font-size:34px;display:flex;gap:16px;
+ align-items:center;margin-bottom:30px;letter-spacing:1px}
+.orn{font-size:30px}
+.badge{font-family:'Cinzel',serif;font-size:11px;letter-spacing:2px;padding:6px 14px;border-radius:2px}
+.card{position:relative;border-radius:4px;padding:30px 34px;margin-bottom:26px}
+.corner{position:absolute;width:46px;height:46px;background-size:contain;
+ background-repeat:no-repeat;opacity:.9;pointer-events:none}
+.corner.tl{top:8px;left:8px}
+.corner.tr{top:8px;right:8px;transform:scaleX(-1)}
+.corner.bl{bottom:8px;left:8px;transform:scaleY(-1)}
+.corner.br{bottom:8px;right:8px;transform:scale(-1)}
+label{font-family:'Cinzel',serif;font-weight:600;display:block;margin-bottom:12px;
+ letter-spacing:1.5px;font-size:14px;text-transform:uppercase}
+select,input[type=text]{font-family:'Cormorant Garamond',serif;border-radius:2px;
+ padding:11px 16px;font-size:18px;min-width:280px}
+.radio-group{display:flex;gap:28px;margin:18px 0;font-family:'Cormorant Garamond',serif;font-size:18px}
+.radio-group label{font-family:'Cormorant Garamond',serif;font-weight:500;text-transform:none;
+ letter-spacing:0;font-size:18px;display:flex;gap:9px;align-items:center;cursor:pointer;margin:0}
+.btn{font-family:'Cinzel',serif;border:none;font-weight:600;font-size:14px;letter-spacing:1px;
+ padding:14px 26px;border-radius:2px;margin-right:12px;cursor:pointer;transition:.2s;position:relative}
+.btn:hover{transform:translateY(-2px)}
+.btn:active{transform:translateY(0)}
+.status{margin-top:16px;font-family:'Cormorant Garamond',serif;font-size:17px;font-weight:600}
+.log{border-radius:3px;padding:16px;font:13px ui-monospace,monospace;height:200px;overflow:auto}
+.files{list-style:none}.files li{display:flex;justify-content:space-between;padding:12px 0;
+ font-family:'Cormorant Garamond',serif;font-size:18px}
+.files small{font-size:14px}
+.files a{font-family:'Cinzel',serif;font-size:13px;text-decoration:none;font-weight:600;letter-spacing:.5px}
+.swatch{text-align:center;margin-top:12px;font:13px ui-monospace,monospace}
+
+body{background:#1a1024;color:#efe6f2}
+.title{color:#e0b94e;text-shadow:0 1px 0 rgba(0,0,0,.3)}
+.orn{color:#f7e6b0}
+.badge{color:#1a1024;background:linear-gradient(135deg,#f7e6b0,#e0b94e);
+ box-shadow:0 2px 6px rgba(0,0,0,.3)}
+.card{background:linear-gradient(180deg,#2a1838 0%,#1f1029 100%);border:1px solid rgba(224,185,78,.35);
+ box-shadow:0 10px 36px rgba(0,0,0,.4),inset 0 0 0 1px rgba(255,255,255,.03),
+  inset 0 0 40px rgba(0,0,0,.2)}
+.corner{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='none' stroke='%23e0b94e' stroke-width='2.5'%3E%3Cpath d='M4 96 L4 30 Q4 4 30 4 L96 4'/%3E%3Cpath d='M14 96 L14 34 Q14 14 34 14 L96 14'/%3E%3Cpath d='M14 50 Q34 50 34 30 Q34 14 50 14'/%3E%3Ccircle cx='24' cy='24' r='5' fill='%23e0b94e'/%3E%3Cpath d='M24 96 Q24 70 40 60 Q52 52 50 40'/%3E%3C/g%3E%3C/svg%3E")}
+label{color:#e0b94e}
+small{color:#a98fb8}
+select,input[type=text]{background:#140a1c;color:#efe6f2;
+ border:1px solid rgba(224,185,78,.35);border-image:linear-gradient(135deg,#f7e6b0,#e0b94e) 1}
+.radio-group{color:#a98fb8}
+input[type=radio]{accent-color:#e0b94e;width:16px;height:16px}
+.btn-primary{color:#1a1024;background:linear-gradient(135deg,#f7e6b0 0%,#e0b94e 50%,#f7e6b0 100%);
+ box-shadow:0 4px 14px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.4)}
+.btn-secondary{color:#e0b94e;background:transparent;border:1px solid #e0b94e;
+ box-shadow:inset 0 0 0 1px rgba(255,255,255,.05)}
+.btn-danger{color:#fff;background:linear-gradient(135deg,#b23a52,#b23a52cc);
+ box-shadow:0 4px 14px rgba(0,0,0,.4)}
+.btn:hover{filter:brightness(1.1)}
+.status{color:#e0b94e}
+.log{background:#140a1c;border:1px solid rgba(224,185,78,.35);color:#e3d4ec}
+.log .ok{color:#7fd6a8}.log .warn{color:#e0b94e}.log .err{color:#e08a8a}
+.files li{border-bottom:1px solid rgba(224,185,78,.35)}
+.files a{color:#e0b94e}
+.files a:hover{color:#f7e6b0}
+.swatch{color:#a98fb8}
+</style></head>
+<body><div class=wrap>
+<h1 class="title"><span class="orn">❦</span> Parser <span class="badge">COMPRESSOR MONITOR</span></h1>
+<div class="card">
+  <div class="corner tl"></div><div class="corner tr"></div>
+  <div class="corner bl"></div><div class="corner br"></div>
+  <label>Сайт</label>
+  <select><option>all</option><option>pnevmo-sklad.ru</option><option>rutector.ru</option></select>
+  <div class="radio-group">
+    <label><input type="radio" name="m" checked> Продолжить с последнего места</label>
+    <label><input type="radio" name="m"> Скачать заново (с нуля)</label>
+  </div>
+  <div style="margin-top:18px">
+    <button class="btn btn-primary">▶ Запустить</button>
+    <button class="btn btn-danger">⏹ Остановить</button>
+  </div>
+  <div class="status">15% · 1671/11279 · 2.4s/prod · err=0</div>
+</div>
+<div class="card">
+  <div class="corner tl"></div><div class="corner tr"></div>
+  <div class="corner bl"></div><div class="corner br"></div>
+  <label>Журнал</label>
+  <div class="log"><div>pnevmo-sklad.ru : 36%| 3337/9326 [2.06prod/s, blocked=0, err=0]</div>
+<div class="ok">[pnevmo-sklad.ru] switched to PROXY</div>
+<div class="warn">[pnevmo-sklad.ru] HTTP 500 on /shop/oborudovanie/...</div>
+<div class="err">[pnevmo-sklad.ru] 3 consecutive blocks — stopping.</div>
+<div>pnevmo-sklad.ru : 37%| 3400/9326 [2.10prod/s, blocked=0, err=1]</div></div>
+</div>
+<div class="card">
+  <div class="corner tl"></div><div class="corner tr"></div>
+  <div class="corner bl"></div><div class="corner br"></div>
+  <label>Результаты (CSV)</label>
+  <ul class="files">
+    <li><span>prices_20260606.csv <small>1751 КБ · 8 240 стр.</small></span><a href="#">⬇ Скачать</a></li>
+    <li><span>prices_20260605.csv <small>409 КБ · 1 920 стр.</small></span><a href="#">⬇ Скачать</a></li>
+  </ul>
+  <div style="margin-top:14px">
+    <button class="btn btn-secondary">🔄 Обновить</button>
+    <button class="btn btn-primary">⬇ Общий список</button>
+    <button class="btn btn-danger">🗑 Очистить</button>
+  </div>
+</div>
+</div>
+<div class=swatch>Вариант: <b>Royal Purple — пурпур + золото (барокко)</b></div></body></html>

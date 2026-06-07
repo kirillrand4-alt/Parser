@@ -1,0 +1,166 @@
+"""Generate ornate baroque / art-nouveau luxury mockups (gold + noble colors)."""
+from pathlib import Path
+
+BODY = """
+<h1 class="title"><span class="orn">❦</span> Parser <span class="badge">COMPRESSOR MONITOR</span></h1>
+<div class="card">
+  <div class="corner tl"></div><div class="corner tr"></div>
+  <div class="corner bl"></div><div class="corner br"></div>
+  <label>Сайт</label>
+  <select><option>all</option><option>pnevmo-sklad.ru</option><option>rutector.ru</option></select>
+  <div class="radio-group">
+    <label><input type="radio" name="m" checked> Продолжить с последнего места</label>
+    <label><input type="radio" name="m"> Скачать заново (с нуля)</label>
+  </div>
+  <div style="margin-top:18px">
+    <button class="btn btn-primary">▶ Запустить</button>
+    <button class="btn btn-danger">⏹ Остановить</button>
+  </div>
+  <div class="status">15% · 1671/11279 · 2.4s/prod · err=0</div>
+</div>
+<div class="card">
+  <div class="corner tl"></div><div class="corner tr"></div>
+  <div class="corner bl"></div><div class="corner br"></div>
+  <label>Журнал</label>
+  <div class="log"><div>pnevmo-sklad.ru : 36%| 3337/9326 [2.06prod/s, blocked=0, err=0]</div>
+<div class="ok">[pnevmo-sklad.ru] switched to PROXY</div>
+<div class="warn">[pnevmo-sklad.ru] HTTP 500 on /shop/oborudovanie/...</div>
+<div class="err">[pnevmo-sklad.ru] 3 consecutive blocks — stopping.</div>
+<div>pnevmo-sklad.ru : 37%| 3400/9326 [2.10prod/s, blocked=0, err=1]</div></div>
+</div>
+<div class="card">
+  <div class="corner tl"></div><div class="corner tr"></div>
+  <div class="corner bl"></div><div class="corner br"></div>
+  <label>Результаты (CSV)</label>
+  <ul class="files">
+    <li><span>prices_20260606.csv <small>1751 КБ · 8 240 стр.</small></span><a href="#">⬇ Скачать</a></li>
+    <li><span>prices_20260605.csv <small>409 КБ · 1 920 стр.</small></span><a href="#">⬇ Скачать</a></li>
+  </ul>
+  <div style="margin-top:14px">
+    <button class="btn btn-secondary">🔄 Обновить</button>
+    <button class="btn btn-primary">⬇ Общий список</button>
+    <button class="btn btn-danger">🗑 Очистить</button>
+  </div>
+</div>
+"""
+
+PAGE = """<!DOCTYPE html><html lang=ru><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Cinzel:wght@600;700&display=swap" rel="stylesheet">
+<title>{name}</title><style>{base}{css}</style></head>
+<body><div class=wrap>{body}</div>
+<div class=swatch>Вариант: <b>{name}</b></div></body></html>"""
+
+# Gold filigree corner ornament (SVG data-uri), tintable via background.
+BASE = """
+*{box-sizing:border-box;margin:0}
+body{min-height:100vh;padding:48px 20px}
+.wrap{max-width:880px;margin:0 auto}
+.title{font-family:'Cinzel',serif;font-weight:700;font-size:34px;display:flex;gap:16px;
+ align-items:center;margin-bottom:30px;letter-spacing:1px}
+.orn{font-size:30px}
+.badge{font-family:'Cinzel',serif;font-size:11px;letter-spacing:2px;padding:6px 14px;border-radius:2px}
+.card{position:relative;border-radius:4px;padding:30px 34px;margin-bottom:26px}
+.corner{position:absolute;width:46px;height:46px;background-size:contain;
+ background-repeat:no-repeat;opacity:.9;pointer-events:none}
+.corner.tl{top:8px;left:8px}
+.corner.tr{top:8px;right:8px;transform:scaleX(-1)}
+.corner.bl{bottom:8px;left:8px;transform:scaleY(-1)}
+.corner.br{bottom:8px;right:8px;transform:scale(-1)}
+label{font-family:'Cinzel',serif;font-weight:600;display:block;margin-bottom:12px;
+ letter-spacing:1.5px;font-size:14px;text-transform:uppercase}
+select,input[type=text]{font-family:'Cormorant Garamond',serif;border-radius:2px;
+ padding:11px 16px;font-size:18px;min-width:280px}
+.radio-group{display:flex;gap:28px;margin:18px 0;font-family:'Cormorant Garamond',serif;font-size:18px}
+.radio-group label{font-family:'Cormorant Garamond',serif;font-weight:500;text-transform:none;
+ letter-spacing:0;font-size:18px;display:flex;gap:9px;align-items:center;cursor:pointer;margin:0}
+.btn{font-family:'Cinzel',serif;border:none;font-weight:600;font-size:14px;letter-spacing:1px;
+ padding:14px 26px;border-radius:2px;margin-right:12px;cursor:pointer;transition:.2s;position:relative}
+.btn:hover{transform:translateY(-2px)}
+.btn:active{transform:translateY(0)}
+.status{margin-top:16px;font-family:'Cormorant Garamond',serif;font-size:17px;font-weight:600}
+.log{border-radius:3px;padding:16px;font:13px ui-monospace,monospace;height:200px;overflow:auto}
+.files{list-style:none}.files li{display:flex;justify-content:space-between;padding:12px 0;
+ font-family:'Cormorant Garamond',serif;font-size:18px}
+.files small{font-size:14px}
+.files a{font-family:'Cinzel',serif;font-size:13px;text-decoration:none;font-weight:600;letter-spacing:.5px}
+.swatch{text-align:center;margin-top:12px;font:13px ui-monospace,monospace}
+"""
+
+def corner_svg(color):
+    c = color.replace('#','%23')
+    return ("data:image/svg+xml,"
+      "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E"
+      f"%3Cg fill='none' stroke='{c}' stroke-width='2.5'%3E"
+      "%3Cpath d='M4 96 L4 30 Q4 4 30 4 L96 4'/%3E"
+      "%3Cpath d='M14 96 L14 34 Q14 14 34 14 L96 14'/%3E"
+      "%3Cpath d='M14 50 Q34 50 34 30 Q34 14 50 14'/%3E"
+      f"%3Ccircle cx='24' cy='24' r='5' fill='{c}'/%3E"
+      "%3Cpath d='M24 96 Q24 70 40 60 Q52 52 50 40'/%3E"
+      "%3C/g%3E%3C/svg%3E")
+
+def theme(bg, panel, gold1, gold2, txt, dim, accent_txt, danger,
+          logbg, border):
+    cs = corner_svg(gold1)
+    return f"""
+body{{background:{bg};color:{txt}}}
+.title{{color:{gold1};text-shadow:0 1px 0 rgba(0,0,0,.3)}}
+.orn{{color:{gold2}}}
+.badge{{color:{bg};background:linear-gradient(135deg,{gold2},{gold1});
+ box-shadow:0 2px 6px rgba(0,0,0,.3)}}
+.card{{background:{panel};border:1px solid {border};
+ box-shadow:0 10px 36px rgba(0,0,0,.4),inset 0 0 0 1px rgba(255,255,255,.03),
+  inset 0 0 40px rgba(0,0,0,.2)}}
+.corner{{background-image:url("{cs}")}}
+label{{color:{gold1}}}
+small{{color:{dim}}}
+select,input[type=text]{{background:{logbg};color:{txt};
+ border:1px solid {border};border-image:linear-gradient(135deg,{gold2},{gold1}) 1}}
+.radio-group{{color:{dim}}}
+input[type=radio]{{accent-color:{gold1};width:16px;height:16px}}
+.btn-primary{{color:{bg};background:linear-gradient(135deg,{gold2} 0%,{gold1} 50%,{gold2} 100%);
+ box-shadow:0 4px 14px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.4)}}
+.btn-secondary{{color:{gold1};background:transparent;border:1px solid {gold1};
+ box-shadow:inset 0 0 0 1px rgba(255,255,255,.05)}}
+.btn-danger{{color:#fff;background:linear-gradient(135deg,{danger},{danger}cc);
+ box-shadow:0 4px 14px rgba(0,0,0,.4)}}
+.btn:hover{{filter:brightness(1.1)}}
+.status{{color:{gold1}}}
+.log{{background:{logbg};border:1px solid {border};color:{accent_txt}}}
+.log .ok{{color:#7fd6a8}}.log .warn{{color:{gold1}}}.log .err{{color:#e08a8a}}
+.files li{{border-bottom:1px solid {border}}}
+.files a{{color:{gold1}}}
+.files a:hover{{color:{gold2}}}
+.swatch{{color:{dim}}}
+"""
+
+THEMES = {
+ "13_royal_emerald_gold": (
+   "Royal Emerald — изумруд + золото (ар-нуво)",
+   theme(
+     bg="#0c1f1a", panel="linear-gradient(180deg,#13322a 0%,#0e2620 100%)",
+     gold1="#d4af37", gold2="#f5e1a4",
+     txt="#ece7d3", dim="#8fa89a", accent_txt="#cfe5da",
+     danger="#a33b3b", logbg="#081512", border="rgba(212,175,55,.35)")),
+ "14_royal_purple_gold": (
+   "Royal Purple — пурпур + золото (барокко)",
+   theme(
+     bg="#1a1024", panel="linear-gradient(180deg,#2a1838 0%,#1f1029 100%)",
+     gold1="#e0b94e", gold2="#f7e6b0",
+     txt="#efe6f2", dim="#a98fb8", accent_txt="#e3d4ec",
+     danger="#b23a52", logbg="#140a1c", border="rgba(224,185,78,.35)")),
+ "15_ivory_gold_classic": (
+   "Ivory & Gold — слоновая кость + золото (дворцовый, светлый)",
+   theme(
+     bg="#f3ecdc", panel="linear-gradient(180deg,#fffaf0 0%,#f6efe0 100%)",
+     gold1="#b8902f", gold2="#e6c878",
+     txt="#3a2f1c", dim="#9a8a6a", accent_txt="#cdbf9a",
+     danger="#9c3b3b", logbg="#2a2418", border="rgba(184,144,47,.4)")),
+}
+
+out = Path(__file__).parent
+for key,(name,css) in THEMES.items():
+    html = PAGE.format(name=name,base=BASE,css=css,body=BODY)
+    (out/f"{key}.html").write_text(html,encoding="utf-8")
+    print("wrote",key)
