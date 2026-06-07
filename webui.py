@@ -123,7 +123,7 @@ HTML = """
   }
   @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
   @keyframes gold-shimmer { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
-  @keyframes flourish-in { from{opacity:0;transform:scale(.7) rotate(-8deg)} to{opacity:.92;transform:scale(1) rotate(0)} }
+  @keyframes corner-fade { from{opacity:0} to{opacity:.9} }
 
   /* ════ THEME: Aurora Glass (default) ════ */
   :root {
@@ -317,7 +317,7 @@ HTML = """
     background-size: contain; background-repeat: no-repeat;
     display: var(--corner-display); opacity: .9; pointer-events: none;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='none' stroke='%23b8902f' stroke-width='2.2'%3E%3Cpath d='M4 96 L4 30 Q4 4 30 4 L96 4'/%3E%3Cpath d='M13 96 L13 33 Q13 13 33 13 L96 13'/%3E%3Cpath d='M13 52 Q34 52 34 31 Q34 13 52 13'/%3E%3Ccircle cx='24' cy='24' r='4.5' fill='%23b8902f'/%3E%3Cpath d='M24 96 Q24 68 42 58 Q56 50 52 36'/%3E%3Cpath d='M52 13 Q70 13 78 26'/%3E%3C/g%3E%3C/svg%3E");
-    animation: flourish-in .7s ease both;
+    animation: corner-fade .7s ease both;
   }
   .corner.tl { top: 7px; left: 7px; }
   .corner.tr { top: 7px; right: 7px; transform: scaleX(-1); }
