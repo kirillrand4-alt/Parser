@@ -104,13 +104,15 @@ class HttpClient:
 
         # Proxy config (optional). Global PROXY / PROXY_REFRESH, or per-site
         # PROXY__<SITE> / PROXY_REFRESH__<SITE> (dots/dashes → underscores).
-        # The proxy is only switched on after repeated non-404 HTTP errors, so
-        # well-behaved pages never consume proxy traffic.
+        # If proxy is configured it is enabled immediately (every request goes
+        # through it). Without proxy, direct access is used throughout.
         key = site_name.replace(".", "_").replace("-", "_").upper()
         self._proxy_url = os.getenv(f"PROXY__{key}") or os.getenv("PROXY") or ""
         self._proxy_refresh = (os.getenv(f"PROXY_REFRESH__{key}")
                                or os.getenv("PROXY_REFRESH") or "")
         self._using_proxy = False
+        if self._proxy_url:
+            self._enable_proxy()
         # Retry knobs
         self._retry_attempts = int(os.getenv("HTTP_RETRY_ATTEMPTS", "3"))
 
@@ -176,22 +178,11 @@ class HttpClient:
                 return resp
             except requests.HTTPError as exc:
                 status = getattr(exc.response, "status_code", None)
-                # 404 = page genuinely gone — skip immediately, no retry/proxy.
+                # 404 = page genuinely gone — skip immediately, no retry.
                 if status == 404:
                     raise
                 last_exc = exc
-                # Any other HTTP error: rotate UA, pause, retry. On the final
-                # local attempt switch to proxy (if configured) for one more try.
                 self._rotate_ua()
-                if (attempt == self._retry_attempts - 1
-                        and self._proxy_url and not self._using_proxy):
-                    self._enable_proxy()
-                    try:
-                        resp = self._raw_get(url, params, headers, timeout, True, **kwargs)
-                        resp.raise_for_status()
-                        return resp
-                    except requests.HTTPError:
-                        raise last_exc
                 time.sleep(2 * (attempt + 1))
         raise last_exc  # type: ignore[misc]
 
