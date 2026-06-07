@@ -237,10 +237,13 @@ HTML = """
   html[data-theme="ivory"] .badge { background-size: 200% 100%; animation: gold-shimmer 4s linear infinite; }
   html[data-theme="ivory"] h1 { justify-content: center; }
   html[data-theme="ivory"] .btn { font-weight: 600; }
-  /* keep left-edge text clear of the corner filigree */
+  /* keep text clear of the corner filigree (all four edges) */
+  html[data-theme="ivory"] .card { padding: 28px 34px 40px; }
   html[data-theme="ivory"] .card > label:first-of-type,
   html[data-theme="ivory"] .card > details > summary,
   html[data-theme="ivory"] #status { padding-left: 34px; }
+  /* lining numerals so digits are evenly readable in the serif font */
+  html[data-theme="ivory"] body { font-variant-numeric: lining-nums tabular-nums; }
 
   body {
     font-family: var(--font-body);
@@ -257,8 +260,12 @@ HTML = """
     display: flex; align-items: center; gap: 6px;
   }
   .theme-switch select {
-    min-width: 0; font-size: 13px; padding: 7px 10px;
-    border-radius: 10px; cursor: pointer;
+    min-width: 0; font-size: 13px; padding: 7px 10px 7px 12px;
+    border-radius: 20px; cursor: pointer;
+    border: 1px solid var(--input-border);
+    background-color: var(--input-bg); color: var(--input-text);
+    font-family: var(--font-body);
+    box-shadow: 0 2px 8px rgba(0,0,0,.25);
   }
 
   /* Floating aurora orbs */
@@ -347,7 +354,24 @@ HTML = """
     outline: none; border-color: var(--accent);
     box-shadow: 0 0 0 3px var(--accent-soft);
   }
-  select { cursor: pointer; min-width: 240px; }
+  /* Custom arrow + no browser default arrow */
+  select {
+    cursor: pointer; min-width: 240px;
+    appearance: none; -webkit-appearance: none;
+    padding-right: 38px;
+    background-image: var(--select-arrow);
+    background-repeat: no-repeat;
+    background-position: right 13px center;
+    background-size: 11px 7px;
+  }
+  :root {
+    /* chevron arrow for dark Aurora theme (light) */
+    --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 11 7'%3E%3Cpath d='M1 1l4.5 5L10 1' stroke='%238b97b5' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  }
+  html[data-theme="ivory"] {
+    /* chevron arrow for light Ivory theme (gold) */
+    --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 11 7'%3E%3Cpath d='M1 1l4.5 5L10 1' stroke='%23b8902f' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  }
 
   /* Buttons with shine sweep */
   .btn {
