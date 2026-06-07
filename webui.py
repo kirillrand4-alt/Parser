@@ -157,11 +157,22 @@ HTML = """
     <p style="color:#888;font-size:12px;margin:0 0 8px">Настройки хранятся только в памяти сервера. После перезапуска сервера нужно вводить заново. <b>Сохраните настройки ДО нажатия «Запустить».</b></p>
 
     <div style="margin-top:12px">
-      <label style="font-size:13px">Задержка между запросами, сек</label>
-      <div style="display:flex;gap:10px;align-items:center">
-        <input id="delayMin" type="number" step="0.1" min="0" placeholder="мин" style="width:90px;padding:8px;border:1px solid #ccc;border-radius:4px">
-        <span style="color:#888">—</span>
-        <input id="delayMax" type="number" step="0.1" min="0" placeholder="макс" style="width:90px;padding:8px;border:1px solid #ccc;border-radius:4px">
+      <div style="display:flex;gap:32px;flex-wrap:wrap">
+        <div>
+          <label style="font-size:13px">Задержка между запросами, сек</label>
+          <div style="display:flex;gap:10px;align-items:center">
+            <input id="delayMin" type="number" step="0.1" min="0" placeholder="мин" style="width:90px;padding:8px;border:1px solid #ccc;border-radius:4px">
+            <span style="color:#888">—</span>
+            <input id="delayMax" type="number" step="0.1" min="0" placeholder="макс" style="width:90px;padding:8px;border:1px solid #ccc;border-radius:4px">
+          </div>
+        </div>
+        <div>
+          <label style="font-size:13px">Потоков (параллельных запросов)</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input id="workers" type="number" step="1" min="1" max="16" placeholder="1" style="width:70px;padding:8px;border:1px solid #ccc;border-radius:4px">
+            <small style="color:#888">1 = последовательно</small>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -287,6 +298,7 @@ function loadSettings() {
     document.getElementById('proxyRefresh').value = d.proxy_refresh || '';
     document.getElementById('delayMin').value = d.delay_min || '';
     document.getElementById('delayMax').value = d.delay_max || '';
+    document.getElementById('workers').value = d.workers || '';
   });
 }
 
@@ -297,6 +309,7 @@ function saveSettings() {
     proxy_refresh: document.getElementById('proxyRefresh').value.trim(),
     delay_min: document.getElementById('delayMin').value.trim(),
     delay_max: document.getElementById('delayMax').value.trim(),
+    workers: document.getElementById('workers').value.trim(),
   };
   fetch('/settings', {
     method: 'POST',
@@ -390,6 +403,7 @@ _FIELD_ENV = {
     "proxy_refresh": "PROXY_REFRESH__",
     "delay_min": "DELAY_MIN__",
     "delay_max": "DELAY_MAX__",
+    "workers": "WORKERS__",
 }
 
 
@@ -399,7 +413,8 @@ def settings():
     global _runtime_env
     # Global env var names (no site suffix) used when site == "all".
     _GLOBAL_ENV = {"proxy": "PROXY", "proxy_refresh": "PROXY_REFRESH",
-                   "delay_min": "DELAY_MIN", "delay_max": "DELAY_MAX"}
+                   "delay_min": "DELAY_MIN", "delay_max": "DELAY_MAX",
+                   "workers": "WORKERS"}
 
     if request.method == "POST":
         data = request.get_json() or {}
