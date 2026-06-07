@@ -111,8 +111,14 @@ class HttpClient:
         self._proxy_refresh = (os.getenv(f"PROXY_REFRESH__{key}")
                                or os.getenv("PROXY_REFRESH") or "")
         self._using_proxy = False
+        import logging as _l
+        _log = _l.getLogger(__name__)
         if self._proxy_url:
+            _log.info("[%s] proxy configured: %s", site_name,
+                      self._proxy_url.split("@")[-1])  # hide credentials
             self._enable_proxy()
+        else:
+            _log.info("[%s] no proxy configured — direct access", site_name)
         # Retry knobs
         self._retry_attempts = int(os.getenv("HTTP_RETRY_ATTEMPTS", "3"))
 

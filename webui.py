@@ -139,7 +139,11 @@ HTML = """
 <div class="card">
   <details id="advanced">
     <summary style="cursor:pointer;font-weight:600;font-size:16px;outline:none">⚙️ Подробные настройки</summary>
-    <p style="color:#666;font-size:13px">Применяются к выбранному выше сайту: <b id="cfgSite">—</b>. Хранятся только в памяти — не сохраняются на диск и не попадают в git. Нужно вводить заново после перезапуска сервера.</p>
+    <p style="color:#666;font-size:13px">Применяются к выбранному выше сайту: <b id="cfgSite">—</b>.</p>
+    <div id="proxyWarning" style="display:none;background:#fff3cd;border:1px solid #ffc107;border-radius:4px;padding:8px 12px;font-size:13px;margin-bottom:8px">
+      ⚠️ <b>Прокси сохранён, но скрапер уже запущен.</b> Остановите его и запустите заново — только тогда прокси применится.
+    </div>
+    <p style="color:#888;font-size:12px;margin:0 0 8px">Настройки хранятся только в памяти сервера. После перезапуска сервера нужно вводить заново. <b>Сохраните настройки ДО нажатия «Запустить».</b></p>
 
     <div style="margin-top:12px">
       <label style="font-size:13px">Задержка между запросами, сек</label>
@@ -289,8 +293,12 @@ function saveSettings() {
     body: JSON.stringify(payload)
   }).then(r => r.json()).then(d => {
     const st = document.getElementById('cfgStatus');
-    if (d.ok) { st.style.color='#28a745'; st.textContent = '✓ Сохранено'; setTimeout(() => st.textContent = '', 3000); }
-    else { st.style.color='#dc3545'; st.textContent = 'Ошибка: ' + (d.error || '?'); }
+    if (d.ok) {
+      st.style.color='#28a745'; st.textContent = '✓ Сохранено'; setTimeout(() => st.textContent = '', 3000);
+      // warn if scraper is already running
+      const running = !document.getElementById('btnStop').disabled;
+      document.getElementById('proxyWarning').style.display = (running && payload.proxy) ? 'block' : 'none';
+    } else { st.style.color='#dc3545'; st.textContent = 'Ошибка: ' + (d.error || '?'); }
   });
 }
 
