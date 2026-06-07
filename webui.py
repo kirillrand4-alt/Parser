@@ -397,14 +397,17 @@ _FIELD_ENV = {
 @requires_auth
 def settings():
     global _runtime_env
+    # Global env var names (no site suffix) used when site == "all".
+    _GLOBAL_ENV = {"proxy": "PROXY", "proxy_refresh": "PROXY_REFRESH",
+                   "delay_min": "DELAY_MIN", "delay_max": "DELAY_MAX"}
+
     if request.method == "POST":
         data = request.get_json() or {}
         site = (data.get("site") or "").strip()
-        if not site or site == "all":
-            return jsonify({"error": "Выберите конкретный сайт (не «all»)."})
-        key = _site_key(site)
+        use_global = (not site or site == "all")
+        key = "" if use_global else _site_key(site)
         for field, prefix in _FIELD_ENV.items():
-            env_name = f"{prefix}{key}"
+            env_name = _GLOBAL_ENV[field] if use_global else f"{prefix}{key}"
             v = str(data.get(field, "")).strip()
             if v:
                 _runtime_env[env_name] = v
@@ -414,8 +417,10 @@ def settings():
         return jsonify({"ok": True})
 
     site = (request.args.get("site") or "").strip()
-    key = _site_key(site)
-    return jsonify({field: _runtime_env.get(f"{prefix}{key}", "")
+    use_global = (not site or site == "all")
+    key = "" if use_global else _site_key(site)
+    return jsonify({field: _runtime_env.get(
+                        _GLOBAL_ENV[field] if use_global else f"{prefix}{key}", "")
                     for field, prefix in _FIELD_ENV.items()})
 
 
