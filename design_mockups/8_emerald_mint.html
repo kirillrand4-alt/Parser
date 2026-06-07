@@ -1,0 +1,81 @@
+<!DOCTYPE html><html lang=ru><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>Emerald Mint — изумруд + мята</title><style>
+*{box-sizing:border-box;margin:0}
+body{font-family:'Inter',system-ui,sans-serif;min-height:100vh;padding:40px 20px}
+.wrap{max-width:880px;margin:0 auto}
+.title{font-weight:800;font-size:30px;display:flex;gap:14px;align-items:center;margin-bottom:26px}
+.badge{font:600 12px ui-monospace,monospace;padding:5px 11px;border-radius:20px}
+.card{backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border-radius:20px;
+ padding:24px;margin-bottom:20px}
+label{font-weight:600;display:block;margin-bottom:10px}
+select,input[type=text]{border-radius:12px;padding:12px 16px;font-size:15px;min-width:260px}
+.radio-group{display:flex;gap:24px;margin:16px 0}
+.radio-group label{font-weight:500;display:flex;gap:8px;align-items:center;cursor:pointer}
+input[type=radio]{width:16px;height:16px}
+.btn{border:none;color:#fff;font:700 15px inherit;padding:13px 24px;border-radius:14px;
+ margin-right:10px;cursor:pointer;transition:.15s}
+.btn:hover{transform:translateY(-2px);filter:brightness(1.12)}
+.btn:active{transform:translateY(0)}
+.status{margin-top:14px;font:600 14px ui-monospace,monospace}
+.log{border-radius:14px;padding:16px;font:13px ui-monospace,monospace;height:200px;overflow:auto}
+.files{list-style:none}.files li{display:flex;justify-content:space-between;padding:10px 0}
+.files a{text-decoration:none;font-weight:600}
+.swatch{text-align:center;margin-top:10px;font:13px ui-monospace,monospace}
+
+body{color:#e8ecf4;background:#05070f;background-image:radial-gradient(900px 500px at 10% 0%,#047857 0,transparent 55%),radial-gradient(800px 500px at 90% 14%,#0d9488 0,transparent 55%),radial-gradient(700px 600px at 50% 110%,#022c22 0,transparent 60%);background-attachment:fixed}
+.title{color:#e8ecf4}
+.badge{color:#34d399;background:rgba(255,255,255,.06);border:1px solid #34d399}
+.card{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.10);
+ box-shadow:0 12px 40px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.08)}
+small{color:#8b97b5}
+select,input[type=text]{background:rgba(0,0,0,.3);color:#e8ecf4;border:1px solid rgba(255,255,255,.15)}
+.radio-group{color:#8b97b5}
+input[type=radio]{accent-color:#34d399}
+.btn-primary{background:linear-gradient(135deg,#34d399,#2dd4bf);box-shadow:0 6px 22px #34d39966}
+.btn-secondary{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2)}
+.btn-danger{background:linear-gradient(135deg,#fb7185,#fb7185);box-shadow:0 6px 22px #fb718555}
+.status{color:#34d399}
+.log{background:rgba(0,0,0,.4);border:1px solid rgba(255,255,255,.1);color:#c9d4e8}
+.log .ok{color:#5ce0b0}.log .warn{color:#ffd27c}.log .err{color:#ff7c9c}
+.files li{border-bottom:1px solid rgba(255,255,255,.08)}
+.files a{color:#34d399}
+.swatch{color:#8b97b5}
+</style></head>
+<body><div class=wrap>
+<h1 class="title">🔧 Parser <span class="badge">COMPRESSOR MONITOR</span></h1>
+<div class="card">
+  <label>Сайт</label>
+  <select><option>all</option><option>pnevmo-sklad.ru</option><option>rutector.ru</option></select>
+  <div class="radio-group">
+    <label><input type="radio" name="m" checked> Продолжить с последнего места</label>
+    <label><input type="radio" name="m"> Скачать заново (с нуля)</label>
+  </div>
+  <div style="margin-top:18px">
+    <button class="btn btn-primary">▶ Запустить</button>
+    <button class="btn btn-danger">⏹ Остановить</button>
+  </div>
+  <div class="status">15% · 1671/11279 · 2.4s/prod · err=0</div>
+</div>
+<div class="card">
+  <label>Лог</label>
+  <div class="log"><div>pnevmo-sklad.ru : 36%| 3337/9326 [2.06prod/s, blocked=0, err=0]</div>
+<div class="ok">[pnevmo-sklad.ru] switched to PROXY</div>
+<div class="warn">[pnevmo-sklad.ru] HTTP 500 on /shop/oborudovanie/...</div>
+<div class="err">[pnevmo-sklad.ru] 3 consecutive blocks — stopping.</div>
+<div>pnevmo-sklad.ru : 37%| 3400/9326 [2.10prod/s, blocked=0, err=1]</div></div>
+</div>
+<div class="card">
+  <label>Результаты (CSV)</label>
+  <ul class="files">
+    <li><span>prices_20260606.csv <small>1751 КБ · 8 240 стр.</small></span><a href="#">⬇ Скачать</a></li>
+    <li><span>prices_20260605.csv <small>409 КБ · 1 920 стр.</small></span><a href="#">⬇ Скачать</a></li>
+  </ul>
+  <div style="margin-top:14px">
+    <button class="btn btn-secondary">🔄 Обновить</button>
+    <button class="btn btn-primary">⬇ Общий список</button>
+    <button class="btn btn-danger">🗑 Очистить</button>
+  </div>
+</div>
+</div>
+<div class=swatch>Вариант: <b>Emerald Mint — изумруд + мята</b></div></body></html>
