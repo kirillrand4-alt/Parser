@@ -22,6 +22,7 @@ import secrets
 import subprocess
 import sys
 import threading
+import time
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
@@ -67,10 +68,12 @@ SITES = [
 DATA_DIR = Path("data")
 CACHE_DIR = Path(os.getenv("CHECKPOINT_DIR", "cache"))
 
-# Active process + log queue (one scrape at a time)
+# Active process (one scrape at a time). Log lines are buffered in a list so
+# the SSE stream can replay them after a page reload while a run is active.
 _proc: subprocess.Popen | None = None
-_log_queue: queue.Queue = queue.Queue()
 _proc_lock = threading.Lock()
+_log_lines: list[str] = []      # all lines of the current/last run
+_log_done: bool = True          # True when no run is in progress
 
 # Runtime env overrides — persisted to .runtime_settings.json (gitignored).
 # Injected into subprocess env on each /start call.
@@ -234,6 +237,10 @@ HTML = """
   html[data-theme="ivory"] .badge { background-size: 200% 100%; animation: gold-shimmer 4s linear infinite; }
   html[data-theme="ivory"] h1 { justify-content: center; }
   html[data-theme="ivory"] .btn { font-weight: 600; }
+  /* keep left-edge text clear of the corner filigree */
+  html[data-theme="ivory"] .card > label:first-of-type,
+  html[data-theme="ivory"] .card > details > summary,
+  html[data-theme="ivory"] #status { padding-left: 34px; }
 
   body {
     font-family: var(--font-body);
@@ -534,7 +541,7 @@ function startScrape() {
     body: JSON.stringify({site, mode})
   }).then(r => r.json()).then(d => {
     if (d.error) { appendLog('ERROR: ' + d.error, 'log-err'); return; }
-    listenLog();
+    listenLog(0);
   });
 }
 
@@ -544,9 +551,10 @@ function stopScrape() {
   });
 }
 
-function listenLog() {
+function listenLog(from) {
   if (evtSource) evtSource.close();
-  evtSource = new EventSource('/log-stream');
+  document.getElementById('log').innerHTML = '';
+  evtSource = new EventSource('/log-stream?from=' + (from || 0));
   evtSource.onmessage = e => {
     const data = JSON.parse(e.data);
     if (data.done) {
@@ -665,6 +673,17 @@ injectCorners();
   setTheme(t);
 })();
 
+// Reconnect to a running scrape after a page reload (replay the buffered log).
+fetch('/running').then(r => r.json()).then(d => {
+  if (d.running) {
+    document.getElementById('btnStart').disabled = true;
+    document.getElementById('btnStop').disabled = false;
+    document.getElementById('statusText').textContent = 'Выполняется…';
+    document.getElementById('statusDot').style.display = 'inline-block';
+    listenLog(0);  // replay from start of buffer, then follow live
+  }
+}).catch(() => {});
+
 loadSettings();
 loadFiles();
 </script>
@@ -699,6 +718,11 @@ def start():
         cmd = [sys.executable, "-m", "monitor", "scrape",
                "--site", site, "--sequential" if site != "all" else "--parallel"]
 
+        # Reset the log buffer for the new run.
+        global _log_lines, _log_done
+        _log_lines = []
+        _log_done = False
+
         _proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -708,17 +732,18 @@ def start():
             env=env,
             cwd=str(Path(__file__).parent),
         )
-        # Drain stdout into queue in background thread
+        # Drain stdout into the buffer in a background thread
         threading.Thread(target=_drain, args=(_proc,), daemon=True).start()
 
     return jsonify({"ok": True})
 
 
 def _drain(proc: subprocess.Popen) -> None:
+    global _log_done
     for line in proc.stdout:
-        _log_queue.put(line.rstrip())
+        _log_lines.append(line.rstrip())
     proc.wait()
-    _log_queue.put(None)  # sentinel → done
+    _log_done = True
 
 
 @app.route("/stop", methods=["POST"])
@@ -778,21 +803,42 @@ def settings():
                     for field, prefix in _FIELD_ENV.items()})
 
 
+@app.route("/running")
+@requires_auth
+def running():
+    """Tell the page whether a scrape is in progress (for reconnect on reload)."""
+    is_running = _proc is not None and _proc.poll() is None
+    return jsonify({"running": is_running, "lines": len(_log_lines)})
+
+
 @app.route("/log-stream")
 @requires_auth
 def log_stream():
+    """Stream the run log via SSE. ?from=N replays buffered lines from index N
+    (0 = from the beginning), then follows live until the run finishes."""
+    try:
+        start = int(request.args.get("from", "0"))
+    except ValueError:
+        start = 0
+
     def generate():
+        idx = max(0, start)
+        idle = 0
         while True:
-            try:
-                item = _log_queue.get(timeout=30)
-            except queue.Empty:
-                yield ": keepalive\n\n"  # SSE comment — keeps connection alive, not shown in log
+            if idx < len(_log_lines):
+                line = _log_lines[idx]; idx += 1; idle = 0
+                payload = json.dumps({"line": line}, ensure_ascii=False)
+                yield f"data: {payload}\n\n"
                 continue
-            if item is None:
+            # caught up to the buffer
+            if _log_done:
                 yield "data: {\"done\": true}\n\n"
                 break
-            payload = json.dumps({"line": item}, ensure_ascii=False)
-            yield f"data: {payload}\n\n"
+            idle += 1
+            if idle >= 30:
+                idle = 0
+                yield ": keepalive\n\n"  # SSE comment — not shown in log
+            time.sleep(1)
 
     return Response(generate(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
