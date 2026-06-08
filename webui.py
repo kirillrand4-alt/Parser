@@ -90,6 +90,85 @@ def _save_runtime_env(d: dict) -> None:
 
 _runtime_env: dict[str, str] = _load_runtime_env()
 
+# ── Price-check index (lazy, rebuilt when CSV files change) ──────────────────
+_price_index: dict[str, list[dict]] = {}   # normalized_key → [scraped rows]
+_price_index_mtime: float = 0.0            # max mtime of CSVs when last built
+_price_index_lock = threading.Lock()
+
+def _norm_key(s: str) -> str:
+    import re as _re
+    return _re.sub(r"[^A-ZА-ЯЁ0-9]", "", s.upper())
+
+def _extract_brand_model(raw: str) -> tuple[str, str]:
+    import html as _html, re as _re
+    name = _html.unescape(raw)
+    m = _re.search(r'"([^"]+)"\s+(.+)', name)
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+    return "", name.strip()
+
+def _build_price_index() -> None:
+    """(Re)load all CSVs from data/ into _price_index."""
+    global _price_index, _price_index_mtime
+    import csv as _csv
+    csvs = list(DATA_DIR.glob("*.csv")) if DATA_DIR.exists() else []
+    if not csvs:
+        _price_index = {}
+        _price_index_mtime = 0.0
+        return
+    max_mtime = max(f.stat().st_mtime for f in csvs)
+    # skip rebuild if nothing changed
+    if max_mtime <= _price_index_mtime and _price_index:
+        return
+    idx: dict[str, list[dict]] = {}
+    for path in csvs:
+        try:
+            with open(path, encoding="utf-8-sig", newline="") as fh:
+                for row in _csv.DictReader(fh):
+                    k = row.get("normalized_key", "").strip()
+                    if k:
+                        idx.setdefault(k, []).append(row)
+        except Exception:
+            pass
+    _price_index = idx
+    _price_index_mtime = max_mtime
+
+def _lookup_prices(query_line: str) -> dict:
+    """Given one text line from user, find all competitor prices."""
+    import re as _re
+    line = query_line.strip()
+    if not line:
+        return {}
+
+    # Try to generate normalized key from the line
+    # Case 1: full prokompressor name with "Brand" Model
+    brand, model = _extract_brand_model(line)
+    candidates = []
+    if brand and model:
+        candidates.append(_norm_key(brand + model))
+    # Case 2: treat the whole line as a key fragment (partial match)
+    candidates.append(_norm_key(line))
+    # Case 3: URL slug → last path segment
+    slug_m = _re.search(r"/([^/]+)/?$", line)
+    if slug_m:
+        candidates.append(_norm_key(slug_m.group(1)))
+
+    for key in candidates:
+        if key and key in _price_index:
+            return {"key": key, "rows": _price_index[key]}
+
+    # Partial / fuzzy: find keys that contain the candidate as substring
+    for key in candidates:
+        if not key or len(key) < 4:
+            continue
+        matches = [k for k in _price_index if key in k]
+        if len(matches) == 1:
+            return {"key": matches[0], "rows": _price_index[matches[0]]}
+        if matches:
+            return {"key": key, "rows": [], "ambiguous": matches[:10]}
+
+    return {}
+
 HTML = """
 <!DOCTYPE html>
 <html lang="ru" data-theme="aurora">
@@ -452,6 +531,46 @@ HTML = """
 
   details > summary { user-select: none; color: var(--label-color); }
   details[open] > summary { margin-bottom: 8px; }
+
+  /* ── Price checker ── */
+  #checkInput {
+    width: 100%; height: 130px; resize: vertical;
+    background: var(--input-bg); color: var(--input-text);
+    border: 1px solid var(--input-border); border-radius: var(--input-radius);
+    padding: 10px 14px; font: 14px ui-monospace,monospace;
+    transition: border-color .2s, box-shadow .2s;
+  }
+  #checkInput:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  #checkResults { margin-top: 14px; }
+  .cr-item {
+    border: 1px solid var(--list-border); border-radius: 8px;
+    margin-bottom: 10px; overflow: hidden;
+  }
+  .cr-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 9px 14px; background: var(--list-hover); cursor: pointer;
+    gap: 12px;
+  }
+  .cr-header:hover { background: var(--card-border); }
+  .cr-query { font-weight: 600; font-size: 14px; flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cr-badge { font-size: 12px; padding: 3px 9px; border-radius: 12px; white-space: nowrap; flex-shrink: 0; }
+  .cr-badge-found   { background: rgba(40,167,69,.18);  color: #28a745; }
+  .cr-badge-miss    { background: rgba(220,53,69,.14);  color: #dc3545; }
+  .cr-badge-ambig   { background: rgba(255,193,7,.18);  color: #b8860b; }
+  .cr-body { display: none; padding: 10px 14px 14px; }
+  .cr-item.open .cr-body { display: block; }
+  .cr-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .cr-table th { text-align: left; padding: 5px 8px; color: var(--label-color);
+    font-family: var(--font-head); font-size: 11px; letter-spacing: .8px;
+    text-transform: uppercase; border-bottom: 1px solid var(--list-border); }
+  .cr-table td { padding: 6px 8px; border-bottom: 1px solid var(--list-border);
+    vertical-align: top; }
+  .cr-table tr:last-child td { border-bottom: none; }
+  .cr-table tr:hover td { background: var(--list-hover); }
+  .cr-price { font-weight: 700; color: var(--accent); font-family: ui-monospace,monospace; }
+  .cr-specs { color: var(--dim); font-size: 12px; }
+  .cr-key { font: 11px ui-monospace,monospace; color: var(--dim); margin-bottom: 8px; }
 </style>
 </head>
 <body>
@@ -546,6 +665,24 @@ HTML = """
     <button class="btn btn-red" onclick="clearFiles()">🗑 Очистить все CSV</button>
   </div>
   <div id="mergeInfo" style="font-size:13px;color:var(--text-dim);margin-top:8px"></div>
+</div>
+
+<div class="card">
+  <label>Проверка цен конкурентов</label>
+  <p style="font-size:13px;color:var(--text-dim);margin-bottom:10px">
+    Вставьте список товаров — по одному на строку. Принимает названия с сайта
+    (с «Бренд» в кавычках), артикулы или URL-slug.
+  </p>
+  <textarea id="checkInput" placeholder='Адсорбционный осушитель "Atlas Copco" CD2+
+"Remeza" WS001
+GA22
+https://prokompressor.ru/catalog/vintovoy-kompressor-atlas-copco-ga22/'></textarea>
+  <div style="margin-top:10px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <button class="btn btn-orange" onclick="checkPrices()">🔍 Проверить</button>
+    <button class="btn btn-blue" onclick="document.getElementById('checkInput').value='';document.getElementById('checkResults').innerHTML=''">✕ Очистить</button>
+    <span id="checkStatus" style="font-size:13px;color:var(--dim)"></span>
+  </div>
+  <div id="checkResults"></div>
 </div>
 
 <script>
@@ -673,6 +810,77 @@ function saveSettings() {
 }
 
 document.getElementById('site').addEventListener('change', loadSettings);
+
+// ── Price checker ──────────────────────────────────────────────────────────
+function checkPrices() {
+  const lines = document.getElementById('checkInput').value;
+  if (!lines.trim()) return;
+  const st = document.getElementById('checkStatus');
+  const out = document.getElementById('checkResults');
+  st.textContent = 'Ищу…'; out.innerHTML = '';
+  fetch('/check-prices', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({lines})
+  }).then(r => r.json()).then(d => {
+    if (d.error) { st.textContent = '⚠ ' + d.error; return; }
+    const n = d.results.length;
+    const found = d.results.filter(r => r.status === 'found').length;
+    st.textContent = `Найдено совпадений: ${found} из ${n} (индекс: ${d.index_size.toLocaleString('ru')} товаров)`;
+    out.innerHTML = d.results.map(r => buildResultItem(r)).join('');
+    // auto-open first found result
+    const first = out.querySelector('.cr-item.found-item');
+    if (first) first.classList.add('open');
+  }).catch(e => { st.textContent = 'Ошибка: ' + e; });
+}
+
+function buildResultItem(r) {
+  if (r.status === 'not_found') {
+    return `<div class="cr-item">
+      <div class="cr-header" onclick="this.parentElement.classList.toggle('open')">
+        <span class="cr-query">${esc(r.query)}</span>
+        <span class="cr-badge cr-badge-miss">Не найдено</span>
+      </div></div>`;
+  }
+  if (r.status === 'ambiguous') {
+    return `<div class="cr-item">
+      <div class="cr-header" onclick="this.parentElement.classList.toggle('open')">
+        <span class="cr-query">${esc(r.query)}</span>
+        <span class="cr-badge cr-badge-ambig">Неоднозначно</span>
+      </div>
+      <div class="cr-body"><p style="font-size:13px;color:var(--dim)">${esc(r.message)}</p></div>
+    </div>`;
+  }
+  // found
+  const rows = r.competitors.map(c => {
+    const link = c.url ? `<a href="${esc(c.url)}" target="_blank" style="color:var(--link);font-size:12px">↗</a>` : '';
+    const specs = c.specs ? `<br><span class="cr-specs">${esc(c.specs)}</span>` : '';
+    return `<tr>
+      <td>${esc(c.site)} ${link}</td>
+      <td class="cr-price">${esc(c.price)}</td>
+      <td>${esc(c.name)}${specs}</td>
+    </tr>`;
+  }).join('');
+  const label = r.brand || r.model ? `${r.brand} ${r.model}`.trim() : r.key;
+  return `<div class="cr-item found-item">
+    <div class="cr-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="cr-query">${esc(r.query)}</span>
+      <span style="color:var(--dim);font-size:13px;flex-shrink:0">${esc(label)}</span>
+      <span class="cr-badge cr-badge-found">${r.competitors.length} сайт${r.competitors.length===1?'':'ов'}</span>
+    </div>
+    <div class="cr-body">
+      <div class="cr-key">Ключ: ${esc(r.key)}</div>
+      <table class="cr-table">
+        <thead><tr><th>Сайт</th><th>Цена</th><th>Название</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
 
 // ── Theme switcher ──
 function injectCorners() {
@@ -940,6 +1148,100 @@ def download(filename: str):
     if not path.exists() or not path.resolve().is_relative_to(DATA_DIR.resolve()):
         return "Not found", 404
     return send_file(path.resolve(), as_attachment=True)
+
+
+@app.route("/check-prices", methods=["POST"])
+@requires_auth
+def check_prices():
+    data = request.get_json() or {}
+    lines = [l.strip() for l in (data.get("lines") or "").splitlines() if l.strip()]
+    if not lines:
+        return jsonify({"error": "Список пуст"}), 400
+
+    with _price_index_lock:
+        _build_price_index()
+
+    results = []
+    for line in lines:
+        res = _lookup_prices(line)
+        rows = res.get("rows", [])
+        key = res.get("key", "")
+        ambiguous = res.get("ambiguous", [])
+
+        if ambiguous:
+            results.append({"query": line, "status": "ambiguous",
+                            "message": f"Несколько совпадений: {', '.join(ambiguous)}"})
+            continue
+        if not rows:
+            results.append({"query": line, "status": "not_found", "key": key})
+            continue
+
+        # Group by site, pick best (highest price if multiple rows per site)
+        by_site: dict[str, dict] = {}
+        for r in rows:
+            site = r.get("site", "")
+            existing = by_site.get(site)
+            if existing is None:
+                by_site[site] = r
+            else:
+                p_new = r.get("price", "")
+                p_old = existing.get("price", "")
+                try:
+                    if float(p_new or 0) > float(p_old or 0):
+                        by_site[site] = r
+                except ValueError:
+                    pass
+
+        # Build a clean summary per site
+        competitors = []
+        for site, r in sorted(by_site.items()):
+            price_raw = r.get("price", "").strip()
+            try:
+                price_val = float(price_raw)
+                price_str = f"{price_val:,.0f} ₽".replace(",", " ")
+            except (ValueError, TypeError):
+                price_str = r.get("availability", "по запросу") or "по запросу"
+            competitors.append({
+                "site": site,
+                "price": price_str,
+                "url": r.get("product_url", ""),
+                "name": r.get("name", ""),
+                "specs": _format_specs_brief(r.get("specs", "")),
+            })
+
+        # Pick the canonical name/brand/model from rows
+        brand = next((r.get("brand","") for r in rows if r.get("brand")), "")
+        model = next((r.get("model","") for r in rows if r.get("model")), "")
+
+        results.append({
+            "query": line,
+            "status": "found",
+            "key": key,
+            "brand": brand,
+            "model": model,
+            "competitors": competitors,
+        })
+
+    return jsonify({"results": results, "index_size": len(_price_index)})
+
+
+def _format_specs_brief(specs_raw: str) -> str:
+    """Return the 3 most important specs as a short string."""
+    if not specs_raw or specs_raw.strip() in ("", "{}", "null"):
+        return ""
+    PRIORITY = ["Производительность", "Давление", "Мощность",
+                "производительность", "давление", "мощность"]
+    try:
+        import json as _json
+        d = _json.loads(specs_raw)
+        parts = []
+        for k in PRIORITY:
+            if k in d and d[k]:
+                parts.append(f"{k}: {d[k]}")
+        return "; ".join(parts) if parts else "; ".join(
+            f"{k}: {v}" for k, v in list(d.items())[:3] if v)
+    except Exception:
+        return ""
 
 
 if __name__ == "__main__":
