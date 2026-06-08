@@ -1196,6 +1196,19 @@ def download(filename: str):
     return send_file(path.resolve(), as_attachment=True)
 
 
+@app.route("/debug-url-index")
+@requires_auth
+def debug_url_index():
+    with _price_index_lock:
+        _build_price_index()
+    sample_keys = list(_url_index.keys())[:20]
+    return jsonify({
+        "url_index_size": len(_url_index),
+        "price_index_size": len(_price_index),
+        "sample_urls": sample_keys,
+    })
+
+
 @app.route("/fetch-urls", methods=["POST"])
 @requires_auth
 def fetch_urls():
