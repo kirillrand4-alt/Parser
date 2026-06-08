@@ -670,16 +670,16 @@ HTML = """
 <div class="card">
   <label>Проверка цен конкурентов</label>
   <p style="font-size:13px;color:var(--text-dim);margin-bottom:10px">
-    Вставьте список товаров — по одному на строку. Принимает названия с сайта
-    (с «Бренд» в кавычках), артикулы или URL-slug.
+    Вставьте ссылки конкурентов — по одной на строку. Скрипт откроет каждую страницу
+    и вернёт актуальные цену, характеристики и наличие.
   </p>
-  <textarea id="checkInput" placeholder='Адсорбционный осушитель "Atlas Copco" CD2+
-"Remeza" WS001
-GA22
-https://prokompressor.ru/catalog/vintovoy-kompressor-atlas-copco-ga22/'></textarea>
+  <textarea id="checkInput" placeholder="https://www.pnevmo-sklad.ru/shop/oborudovanie/...
+https://www.compressortyt.ru/stanciya/...
+https://rutector.ru/products/..."></textarea>
   <div style="margin-top:10px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-    <button class="btn btn-orange" onclick="checkPrices()">🔍 Проверить</button>
-    <button class="btn btn-blue" onclick="document.getElementById('checkInput').value='';document.getElementById('checkResults').innerHTML=''">✕ Очистить</button>
+    <button class="btn btn-orange" id="btnFetch" onclick="fetchUrls()">🔍 Проверить</button>
+    <button class="btn btn-red"    id="btnFetchStop" onclick="stopFetch()" disabled>⏹ Стоп</button>
+    <button class="btn btn-blue" onclick="document.getElementById('checkInput').value='';document.getElementById('checkResults').innerHTML='';document.getElementById('checkStatus').textContent=''">✕ Очистить</button>
     <span id="checkStatus" style="font-size:13px;color:var(--dim)"></span>
   </div>
   <div id="checkResults"></div>
@@ -811,70 +811,103 @@ function saveSettings() {
 
 document.getElementById('site').addEventListener('change', loadSettings);
 
-// ── Price checker ──────────────────────────────────────────────────────────
-function checkPrices() {
-  const lines = document.getElementById('checkInput').value;
-  if (!lines.trim()) return;
-  const st = document.getElementById('checkStatus');
+// ── Live URL fetcher ───────────────────────────────────────────────────────
+let _fetchEvt = null;
+
+function fetchUrls() {
+  const urls = document.getElementById('checkInput').value.trim();
+  if (!urls) return;
+  const st  = document.getElementById('checkStatus');
   const out = document.getElementById('checkResults');
-  st.textContent = 'Ищу…'; out.innerHTML = '';
-  fetch('/check-prices', {
+  out.innerHTML = ''; st.textContent = 'Запускаю…';
+  document.getElementById('btnFetch').disabled = true;
+  document.getElementById('btnFetchStop').disabled = false;
+
+  let done = 0, ok = 0, err = 0;
+  const total = urls.split('\n').filter(l => l.trim()).length;
+
+  // POST the URL list, get back an SSE stream
+  fetch('/fetch-urls', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({lines})
-  }).then(r => r.json()).then(d => {
-    if (d.error) { st.textContent = '⚠ ' + d.error; return; }
-    const n = d.results.length;
-    const found = d.results.filter(r => r.status === 'found').length;
-    st.textContent = `Найдено совпадений: ${found} из ${n} (индекс: ${d.index_size.toLocaleString('ru')} товаров)`;
-    out.innerHTML = d.results.map(r => buildResultItem(r)).join('');
-    // auto-open first found result
-    const first = out.querySelector('.cr-item.found-item');
-    if (first) first.classList.add('open');
-  }).catch(e => { st.textContent = 'Ошибка: ' + e; });
+    body: JSON.stringify({urls})
+  }).then(resp => {
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    function pump() {
+      reader.read().then(({done: rd, value}) => {
+        if (rd) return;
+        buf += dec.decode(value, {stream: true});
+        const parts = buf.split('\n\n');
+        buf = parts.pop();
+        parts.forEach(chunk => {
+          const line = chunk.replace(/^data: /, '').trim();
+          if (!line) return;
+          try {
+            const d = JSON.parse(line);
+            if (d.done) {
+              st.textContent = `Готово: ${ok} ОК, ${err} ошибок из ${total}`;
+              document.getElementById('btnFetch').disabled = false;
+              document.getElementById('btnFetchStop').disabled = true;
+              return;
+            }
+            done++;
+            st.textContent = `${done} / ${total}…`;
+            if (d.status === 'ok') ok++; else err++;
+            out.insertAdjacentHTML('afterbegin', buildFetchItem(d));
+          } catch(e) {}
+        });
+        pump();
+      });
+    }
+    pump();
+    _fetchEvt = reader;
+  }).catch(e => { st.textContent = 'Ошибка: ' + e; resetFetchBtns(); });
 }
 
-function buildResultItem(r) {
-  if (r.status === 'not_found') {
+function stopFetch() {
+  if (_fetchEvt) { try { _fetchEvt.cancel(); } catch(e) {} _fetchEvt = null; }
+  resetFetchBtns();
+  document.getElementById('checkStatus').textContent = 'Остановлено.';
+}
+function resetFetchBtns() {
+  document.getElementById('btnFetch').disabled = false;
+  document.getElementById('btnFetchStop').disabled = true;
+}
+
+function buildFetchItem(d) {
+  const urlShort = d.url.replace(/https?:\/\/(www\.)?/, '').replace(/\/$/, '');
+  if (d.status !== 'ok') {
+    const cls = d.status === 'skipped' ? 'cr-badge-ambig' : 'cr-badge-miss';
+    const label = d.status === 'skipped' ? 'Пропущено' : (d.status === 'unknown_site' ? 'Неизвестный сайт' : 'Ошибка');
     return `<div class="cr-item">
-      <div class="cr-header" onclick="this.parentElement.classList.toggle('open')">
-        <span class="cr-query">${esc(r.query)}</span>
-        <span class="cr-badge cr-badge-miss">Не найдено</span>
+      <div class="cr-header">
+        <span class="cr-query"><a href="${esc(d.url)}" target="_blank" style="color:var(--link)">${esc(urlShort)}</a></span>
+        <span class="cr-badge ${cls}">${label}: ${esc(d.error||'')}</span>
       </div></div>`;
   }
-  if (r.status === 'ambiguous') {
-    return `<div class="cr-item">
-      <div class="cr-header" onclick="this.parentElement.classList.toggle('open')">
-        <span class="cr-query">${esc(r.query)}</span>
-        <span class="cr-badge cr-badge-ambig">Неоднозначно</span>
-      </div>
-      <div class="cr-body"><p style="font-size:13px;color:var(--dim)">${esc(r.message)}</p></div>
-    </div>`;
+  const p = d.product;
+  const price = p.price ? `${Number(p.price).toLocaleString('ru')} ₽` : (p.availability || 'по запросу');
+  const old_price = p.old_price ? `<s style="color:var(--dim);font-size:12px">${Number(p.old_price).toLocaleString('ru')} ₽</s> ` : '';
+  // format specs
+  let specsHtml = '';
+  if (p.specs && Object.keys(p.specs).length) {
+    const rows = Object.entries(p.specs).map(([k,v]) =>
+      `<tr><td style="color:var(--dim);padding:3px 8px;font-size:12px;white-space:nowrap">${esc(k)}</td><td style="padding:3px 8px;font-size:13px">${esc(String(v))}</td></tr>`
+    ).join('');
+    specsHtml = `<table style="margin-top:8px;border-collapse:collapse">${rows}</table>`;
   }
-  // found
-  const rows = r.competitors.map(c => {
-    const link = c.url ? `<a href="${esc(c.url)}" target="_blank" style="color:var(--link);font-size:12px">↗</a>` : '';
-    const specs = c.specs ? `<br><span class="cr-specs">${esc(c.specs)}</span>` : '';
-    return `<tr>
-      <td>${esc(c.site)} ${link}</td>
-      <td class="cr-price">${esc(c.price)}</td>
-      <td>${esc(c.name)}${specs}</td>
-    </tr>`;
-  }).join('');
-  const label = r.brand || r.model ? `${r.brand} ${r.model}`.trim() : r.key;
-  return `<div class="cr-item found-item">
+  const avail = p.availability ? `<span style="font-size:12px;color:var(--dim)"> · ${esc(p.availability)}</span>` : '';
+  return `<div class="cr-item found-item open">
     <div class="cr-header" onclick="this.parentElement.classList.toggle('open')">
-      <span class="cr-query">${esc(r.query)}</span>
-      <span style="color:var(--dim);font-size:13px;flex-shrink:0">${esc(label)}</span>
-      <span class="cr-badge cr-badge-found">${r.competitors.length} сайт${r.competitors.length===1?'':'ов'}</span>
+      <span class="cr-query" style="font-weight:normal">${esc(p.name || urlShort)}</span>
+      <span style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+        ${old_price}<span class="cr-price">${esc(price)}</span>${avail}
+        <a href="${esc(d.url)}" target="_blank" style="color:var(--link);font-size:13px">↗</a>
+      </span>
     </div>
-    <div class="cr-body">
-      <div class="cr-key">Ключ: ${esc(r.key)}</div>
-      <table class="cr-table">
-        <thead><tr><th>Сайт</th><th>Цена</th><th>Название</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>
+    <div class="cr-body">${specsHtml}</div>
   </div>`;
 }
 
@@ -1148,6 +1181,88 @@ def download(filename: str):
     if not path.exists() or not path.resolve().is_relative_to(DATA_DIR.resolve()):
         return "Not found", 404
     return send_file(path.resolve(), as_attachment=True)
+
+
+@app.route("/fetch-urls", methods=["POST"])
+@requires_auth
+def fetch_urls():
+    """SSE stream: scrape a list of URLs one by one using the site scrapers.
+    Each event is JSON: {url, status, product} or {url, status, error}."""
+    data = request.get_json() or {}
+    urls = [u.strip() for u in (data.get("urls") or "").splitlines() if u.strip()]
+    if not urls:
+        return jsonify({"error": "Список пуст"}), 400
+
+    def generate():
+        import re as _re
+        from urllib.parse import urlparse
+        from monitor.registry import ALL_SCRAPERS
+
+        # one scraper instance per site (reuse session/proxy settings)
+        scrapers: dict[str, object] = {}
+        env = os.environ.copy()
+        env.update(_runtime_env)
+
+        for url in urls:
+            try:
+                host = urlparse(url).netloc.lstrip("www.")
+            except Exception:
+                host = ""
+
+            # find matching site key
+            site_key = None
+            for key in ALL_SCRAPERS:
+                if host == key or host.endswith("." + key):
+                    site_key = key
+                    break
+
+            if not site_key:
+                payload = json.dumps({"url": url, "status": "unknown_site",
+                                      "error": f"Сайт «{host}» не поддерживается"},
+                                     ensure_ascii=False)
+                yield f"data: {payload}\n\n"
+                continue
+
+            if site_key not in scrapers:
+                try:
+                    cls = ALL_SCRAPERS[site_key]
+                    inst = cls()
+                    # inject proxy if configured
+                    proxy = env.get(f"PROXY__{site_key.replace('.','_').replace('-','_').upper()}") \
+                         or env.get("PROXY", "")
+                    if proxy:
+                        inst.client._proxy_url = proxy
+                        inst.client._enable_proxy()
+                    scrapers[site_key] = inst
+                except Exception as e:
+                    payload = json.dumps({"url": url, "status": "error",
+                                          "error": f"Не удалось создать скрапер: {e}"},
+                                         ensure_ascii=False)
+                    yield f"data: {payload}\n\n"
+                    continue
+
+            scraper = scrapers[site_key]
+            try:
+                product = scraper.parse_product(url)
+                if product is None:
+                    payload = json.dumps({"url": url, "status": "skipped",
+                                          "error": "Страница-серия или нет данных"},
+                                         ensure_ascii=False)
+                else:
+                    # convert Product dataclass to dict
+                    import dataclasses as _dc
+                    d = _dc.asdict(product) if _dc.is_dataclass(product) else vars(product)
+                    payload = json.dumps({"url": url, "status": "ok", "product": d},
+                                         ensure_ascii=False)
+            except Exception as e:
+                payload = json.dumps({"url": url, "status": "error", "error": str(e)},
+                                     ensure_ascii=False)
+            yield f"data: {payload}\n\n"
+
+        yield 'data: {"done": true}\n\n'
+
+    return Response(generate(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.route("/check-prices", methods=["POST"])
