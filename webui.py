@@ -90,6 +90,11 @@ def _save_runtime_env(d: dict) -> None:
 
 _runtime_env: dict[str, str] = _load_runtime_env()
 
+# ── URL-fetch job queue ───────────────────────────────────────────────────────
+# POST /fetch-urls stores the URL list here; GET /fetch-urls-stream reads it.
+_fetch_job_urls: list[str] = []
+_fetch_job_lock = threading.Lock()
+
 # ── Price-check index (lazy, rebuilt when CSV files change) ──────────────────
 _price_index: dict[str, list[dict]] = {}   # normalized_key → [scraped rows]
 _price_index_mtime: float = 0.0            # max mtime of CSVs when last built
@@ -823,51 +828,41 @@ function fetchUrls() {
   document.getElementById('btnFetch').disabled = true;
   document.getElementById('btnFetchStop').disabled = false;
 
-  let done = 0, ok = 0, err = 0;
   const total = urls.split('\n').filter(l => l.trim()).length;
+  let done = 0, ok = 0, err = 0;
 
-  // POST the URL list, get back an SSE stream
+  // Step 1: POST the URL list
   fetch('/fetch-urls', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
     body: JSON.stringify({urls})
-  }).then(resp => {
-    const reader = resp.body.getReader();
-    const dec = new TextDecoder();
-    let buf = '';
-    function pump() {
-      reader.read().then(({done: rd, value}) => {
-        if (rd) return;
-        buf += dec.decode(value, {stream: true});
-        const parts = buf.split('\n\n');
-        buf = parts.pop();
-        parts.forEach(chunk => {
-          const line = chunk.replace(/^data: /, '').trim();
-          if (!line) return;
-          try {
-            const d = JSON.parse(line);
-            if (d.done) {
-              st.textContent = `Готово: ${ok} ОК, ${err} ошибок из ${total}`;
-              document.getElementById('btnFetch').disabled = false;
-              document.getElementById('btnFetchStop').disabled = true;
-              return;
-            }
-            done++;
-            st.textContent = `${done} / ${total}…`;
-            if (d.status === 'ok') ok++; else err++;
-            out.insertAdjacentHTML('afterbegin', buildFetchItem(d));
-          } catch(e) {}
-        });
-        pump();
-      });
-    }
-    pump();
-    _fetchEvt = reader;
+  }).then(r => r.json()).then(d => {
+    if (d.error) { st.textContent = '⚠ ' + d.error; resetFetchBtns(); return; }
+    // Step 2: open EventSource to stream results
+    if (_fetchEvt) _fetchEvt.close();
+    _fetchEvt = new EventSource('/fetch-urls-stream');
+    _fetchEvt.onmessage = e => {
+      const data = JSON.parse(e.data);
+      if (data.done) {
+        _fetchEvt.close(); _fetchEvt = null;
+        st.textContent = `Готово: ${ok} ОК, ${err} ошибок из ${total}`;
+        resetFetchBtns(); return;
+      }
+      done++;
+      st.textContent = `${done} / ${total}…`;
+      if (data.status === 'ok') ok++; else err++;
+      out.insertAdjacentHTML('afterbegin', buildFetchItem(data));
+    };
+    _fetchEvt.onerror = () => {
+      st.textContent = `Ошибка соединения (обработано: ${done}/${total})`;
+      resetFetchBtns();
+    };
   }).catch(e => { st.textContent = 'Ошибка: ' + e; resetFetchBtns(); });
 }
 
 function stopFetch() {
-  if (_fetchEvt) { try { _fetchEvt.cancel(); } catch(e) {} _fetchEvt = null; }
+  if (_fetchEvt) { _fetchEvt.close(); _fetchEvt = null; }
+  fetch('/fetch-urls', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{"urls":""}'});
   resetFetchBtns();
   document.getElementById('checkStatus').textContent = 'Остановлено.';
 }
@@ -1186,19 +1181,29 @@ def download(filename: str):
 @app.route("/fetch-urls", methods=["POST"])
 @requires_auth
 def fetch_urls():
-    """SSE stream: scrape a list of URLs one by one using the site scrapers.
-    Each event is JSON: {url, status, product} or {url, status, error}."""
+    """Store URL list for the SSE stream endpoint."""
+    global _fetch_job_urls
     data = request.get_json() or {}
     urls = [u.strip() for u in (data.get("urls") or "").splitlines() if u.strip()]
     if not urls:
         return jsonify({"error": "Список пуст"}), 400
+    with _fetch_job_lock:
+        _fetch_job_urls = urls
+    return jsonify({"ok": True, "count": len(urls)})
+
+
+@app.route("/fetch-urls-stream")
+@requires_auth
+def fetch_urls_stream():
+    """SSE: scrape stored URLs one by one and stream results."""
+    with _fetch_job_lock:
+        urls = list(_fetch_job_urls)
 
     def generate():
-        import re as _re
+        import dataclasses as _dc
         from urllib.parse import urlparse
         from monitor.registry import ALL_SCRAPERS
 
-        # one scraper instance per site (reuse session/proxy settings)
         scrapers: dict[str, object] = {}
         env = os.environ.copy()
         env.update(_runtime_env)
@@ -1209,60 +1214,48 @@ def fetch_urls():
             except Exception:
                 host = ""
 
-            # find matching site key
-            site_key = None
-            for key in ALL_SCRAPERS:
-                if host == key or host.endswith("." + key):
-                    site_key = key
-                    break
+            site_key = next((k for k in ALL_SCRAPERS
+                             if host == k or host.endswith("." + k)), None)
 
             if not site_key:
-                payload = json.dumps({"url": url, "status": "unknown_site",
-                                      "error": f"Сайт «{host}» не поддерживается"},
-                                     ensure_ascii=False)
-                yield f"data: {payload}\n\n"
+                yield _sse({"url": url, "status": "unknown_site",
+                            "error": f"Сайт «{host}» не поддерживается"})
                 continue
 
             if site_key not in scrapers:
                 try:
                     cls = ALL_SCRAPERS[site_key]
                     inst = cls()
-                    # inject proxy if configured
-                    proxy = env.get(f"PROXY__{site_key.replace('.','_').replace('-','_').upper()}") \
-                         or env.get("PROXY", "")
+                    proxy = (env.get(f"PROXY__{site_key.replace('.','_').replace('-','_').upper()}")
+                             or env.get("PROXY", ""))
                     if proxy:
                         inst.client._proxy_url = proxy
                         inst.client._enable_proxy()
                     scrapers[site_key] = inst
                 except Exception as e:
-                    payload = json.dumps({"url": url, "status": "error",
-                                          "error": f"Не удалось создать скрапер: {e}"},
-                                         ensure_ascii=False)
-                    yield f"data: {payload}\n\n"
+                    yield _sse({"url": url, "status": "error",
+                                "error": f"Скрапер: {e}"})
                     continue
 
-            scraper = scrapers[site_key]
             try:
-                product = scraper.parse_product(url)
+                product = scrapers[site_key].parse_product(url)
                 if product is None:
-                    payload = json.dumps({"url": url, "status": "skipped",
-                                          "error": "Страница-серия или нет данных"},
-                                         ensure_ascii=False)
+                    yield _sse({"url": url, "status": "skipped",
+                                "error": "Страница-серия или нет данных"})
                 else:
-                    # convert Product dataclass to dict
-                    import dataclasses as _dc
                     d = _dc.asdict(product) if _dc.is_dataclass(product) else vars(product)
-                    payload = json.dumps({"url": url, "status": "ok", "product": d},
-                                         ensure_ascii=False)
+                    yield _sse({"url": url, "status": "ok", "product": d})
             except Exception as e:
-                payload = json.dumps({"url": url, "status": "error", "error": str(e)},
-                                     ensure_ascii=False)
-            yield f"data: {payload}\n\n"
+                yield _sse({"url": url, "status": "error", "error": str(e)})
 
         yield 'data: {"done": true}\n\n'
 
     return Response(generate(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+def _sse(obj: dict) -> str:
+    return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
 
 
 @app.route("/check-prices", methods=["POST"])
