@@ -1361,6 +1361,32 @@ def fetch_urls_stream():
 
         result_q: queue.Queue = queue.Queue()
 
+        # CSV file to append live-scraped results into
+        import csv as _csv
+        DATA_DIR.mkdir(exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d")
+        csv_path = DATA_DIR / f"prices_checked_{ts}.csv"
+        csv_lock = threading.Lock()
+        CSV_FIELDS = [
+            "site","brand","series","name","model","sku","price","old_price",
+            "discount_pct","currency","availability","series_status",
+            "replacement_model","specs","category_path","product_url",
+            "image_url","normalized_key","scraped_at",
+        ]
+        # Write header if file is new
+        if not csv_path.exists():
+            with open(csv_path, "w", encoding="utf-8", newline="") as fh:
+                _csv.DictWriter(fh, fieldnames=CSV_FIELDS).writeheader()
+
+        def _append_to_csv(row_dict: dict) -> None:
+            with csv_lock:
+                with open(csv_path, "a", encoding="utf-8", newline="") as fh:
+                    w = _csv.DictWriter(fh, fieldnames=CSV_FIELDS, extrasaction="ignore")
+                    w.writerow(row_dict)
+            # invalidate URL index so next resume picks up the new row
+            global _price_index_mtime
+            _price_index_mtime = 0.0
+
         def scrape_site(site_key: str, site_url_list: list[str]) -> None:
             try:
                 cls = ALL_SCRAPERS[site_key]
@@ -1384,7 +1410,9 @@ def fetch_urls_stream():
                         result_q.put({"url": url, "status": "skipped",
                                       "error": "Страница-серия или нет данных"})
                     else:
-                        d = _dc.asdict(product) if _dc.is_dataclass(product) else vars(product)
+                        d = product.to_dict() if hasattr(product, "to_dict") else (
+                            _dc.asdict(product) if _dc.is_dataclass(product) else vars(product))
+                        _append_to_csv(d)
                         result_q.put({"url": url, "status": "ok", "product": d})
                 except Exception as e:
                     result_q.put({"url": url, "status": "error", "error": str(e)})
