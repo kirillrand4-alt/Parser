@@ -1195,7 +1195,7 @@ def fetch_urls():
 @app.route("/fetch-urls-stream")
 @requires_auth
 def fetch_urls_stream():
-    """SSE: scrape stored URLs one by one and stream results."""
+    """SSE: scrape stored URLs — parallel per site, sequential within each site."""
     with _fetch_job_lock:
         urls = list(_fetch_job_urls)
 
@@ -1204,49 +1204,83 @@ def fetch_urls_stream():
         from urllib.parse import urlparse
         from monitor.registry import ALL_SCRAPERS
 
-        scrapers: dict[str, object] = {}
         env = os.environ.copy()
         env.update(_runtime_env)
 
+        # Group URLs by site key, preserving order within each site
+        from collections import defaultdict
+        site_urls: dict[str, list[str]] = defaultdict(list)
+        unknown: list[str] = []
         for url in urls:
+            host = urlparse(url).netloc.lstrip("www.")
+            key = next((k for k in ALL_SCRAPERS
+                        if host == k or host.endswith("." + k)), None)
+            if key:
+                site_urls[key].append(url)
+            else:
+                unknown.append(url)
+
+        # Emit unknown-site errors immediately
+        for url in unknown:
+            host = urlparse(url).netloc.lstrip("www.")
+            yield _sse({"url": url, "status": "unknown_site",
+                        "error": f"Сайт «{host}» не поддерживается"})
+
+        if not site_urls:
+            yield 'data: {"done": true}\n\n'
+            return
+
+        result_q: queue.Queue = queue.Queue()
+
+        def scrape_site(site_key: str, site_url_list: list[str]) -> None:
             try:
-                host = urlparse(url).netloc.lstrip("www.")
-            except Exception:
-                host = ""
-
-            site_key = next((k for k in ALL_SCRAPERS
-                             if host == k or host.endswith("." + k)), None)
-
-            if not site_key:
-                yield _sse({"url": url, "status": "unknown_site",
-                            "error": f"Сайт «{host}» не поддерживается"})
-                continue
-
-            if site_key not in scrapers:
-                try:
-                    cls = ALL_SCRAPERS[site_key]
-                    inst = cls()
-                    proxy = (env.get(f"PROXY__{site_key.replace('.','_').replace('-','_').upper()}")
-                             or env.get("PROXY", ""))
-                    if proxy:
-                        inst.client._proxy_url = proxy
-                        inst.client._enable_proxy()
-                    scrapers[site_key] = inst
-                except Exception as e:
-                    yield _sse({"url": url, "status": "error",
-                                "error": f"Скрапер: {e}"})
-                    continue
-
-            try:
-                product = scrapers[site_key].parse_product(url)
-                if product is None:
-                    yield _sse({"url": url, "status": "skipped",
-                                "error": "Страница-серия или нет данных"})
-                else:
-                    d = _dc.asdict(product) if _dc.is_dataclass(product) else vars(product)
-                    yield _sse({"url": url, "status": "ok", "product": d})
+                cls = ALL_SCRAPERS[site_key]
+                inst = cls()
+                proxy = (env.get(f"PROXY__{site_key.replace('.','_').replace('-','_').upper()}")
+                         or env.get("PROXY", ""))
+                if proxy:
+                    inst.client._proxy_url = proxy
+                    inst.client._enable_proxy()
             except Exception as e:
-                yield _sse({"url": url, "status": "error", "error": str(e)})
+                for url in site_url_list:
+                    result_q.put({"url": url, "status": "error",
+                                  "error": f"Скрапер {site_key}: {e}"})
+                result_q.put({"_site_done": site_key})
+                return
+
+            for url in site_url_list:
+                try:
+                    product = inst.parse_product(url)
+                    if product is None:
+                        result_q.put({"url": url, "status": "skipped",
+                                      "error": "Страница-серия или нет данных"})
+                    else:
+                        d = _dc.asdict(product) if _dc.is_dataclass(product) else vars(product)
+                        result_q.put({"url": url, "status": "ok", "product": d})
+                except Exception as e:
+                    result_q.put({"url": url, "status": "error", "error": str(e)})
+            result_q.put({"_site_done": site_key})
+
+        # Launch one thread per site
+        threads = []
+        for site_key, site_url_list in site_urls.items():
+            t = threading.Thread(target=scrape_site, args=(site_key, site_url_list),
+                                 daemon=True)
+            t.start()
+            threads.append(t)
+
+        sites_done = 0
+        total_sites = len(site_urls)
+        while sites_done < total_sites:
+            try:
+                item = result_q.get(timeout=120)
+            except queue.Empty:
+                yield ": keepalive\n\n"
+                continue
+            if "_site_done" in item:
+                sites_done += 1
+            else:
+                yield _sse(item)
 
         yield 'data: {"done": true}\n\n'
 
