@@ -1410,10 +1410,17 @@ def fetch_urls_stream():
                         result_q.put({"url": url, "status": "skipped",
                                       "error": "Страница-серия или нет данных"})
                     else:
-                        d = product.to_dict() if hasattr(product, "to_dict") else (
+                        csv_row = product.to_dict() if hasattr(product, "to_dict") else (
                             _dc.asdict(product) if _dc.is_dataclass(product) else vars(product))
-                        _append_to_csv(d)
-                        result_q.put({"url": url, "status": "ok", "product": d})
+                        _append_to_csv(csv_row)
+                        # For the UI: specs must be a dict, not a JSON string
+                        ui_row = dict(csv_row)
+                        if isinstance(ui_row.get("specs"), str):
+                            try:
+                                ui_row["specs"] = json.loads(ui_row["specs"])
+                            except Exception:
+                                ui_row["specs"] = {}
+                        result_q.put({"url": url, "status": "ok", "product": ui_row})
                 except Exception as e:
                     result_q.put({"url": url, "status": "error", "error": str(e)})
             result_q.put({"_site_done": site_key})
