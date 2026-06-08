@@ -98,7 +98,8 @@ _fetch_job_lock = threading.Lock()
 
 # ── Price-check index (lazy, rebuilt when CSV files change) ──────────────────
 _price_index: dict[str, list[dict]] = {}   # normalized_key → [scraped rows]
-_price_index_mtime: float = 0.0            # max mtime of CSVs when last built
+_url_index: dict[str, dict] = {}           # product_url (normalized) → row
+_price_index_mtime: float = 0.0
 _price_index_lock = threading.Lock()
 
 def _norm_key(s: str) -> str:
@@ -113,20 +114,26 @@ def _extract_brand_model(raw: str) -> tuple[str, str]:
         return m.group(1).strip(), m.group(2).strip()
     return "", name.strip()
 
+def _norm_url(url: str) -> str:
+    """Normalise a URL for lookup: strip scheme, www, trailing slash."""
+    import re as _re
+    u = url.strip().lower()
+    u = _re.sub(r'^https?://(www\.)?', '', u)
+    return u.rstrip('/')
+
 def _build_price_index() -> None:
-    """(Re)load all CSVs from data/ into _price_index."""
-    global _price_index, _price_index_mtime
+    """(Re)load all CSVs from data/ into _price_index and _url_index."""
+    global _price_index, _url_index, _price_index_mtime
     import csv as _csv
     csvs = list(DATA_DIR.glob("*.csv")) if DATA_DIR.exists() else []
     if not csvs:
-        _price_index = {}
-        _price_index_mtime = 0.0
+        _price_index = {}; _url_index = {}; _price_index_mtime = 0.0
         return
     max_mtime = max(f.stat().st_mtime for f in csvs)
-    # skip rebuild if nothing changed
     if max_mtime <= _price_index_mtime and _price_index:
         return
     idx: dict[str, list[dict]] = {}
+    uidx: dict[str, dict] = {}
     for path in csvs:
         try:
             with open(path, encoding="utf-8-sig", newline="") as fh:
@@ -134,9 +141,13 @@ def _build_price_index() -> None:
                     k = row.get("normalized_key", "").strip()
                     if k:
                         idx.setdefault(k, []).append(row)
+                    pu = row.get("product_url", "").strip()
+                    if pu:
+                        uidx[_norm_url(pu)] = row
         except Exception:
             pass
     _price_index = idx
+    _url_index = uidx
     _price_index_mtime = max_mtime
 
 def _lookup_prices(query_line: str) -> dict:
@@ -1222,10 +1233,18 @@ def fetch_urls_stream():
             with _price_index_lock:
                 _build_price_index()
 
-        def _key_from_url(url: str) -> str:
-            """Best-effort normalized key from a competitor URL slug."""
-            slug = urlparse(url).path.rstrip("/").rsplit("/", 1)[-1]
-            return _re.sub(r"[^A-ZА-ЯЁ0-9]", "", slug.upper())
+        def _row_to_product(r: dict) -> dict:
+            try:
+                specs = json.loads(r["specs"]) if r.get("specs") and r["specs"] not in ("{}", "") else {}
+            except Exception:
+                specs = {}
+            return {
+                "site": r.get("site", ""), "name": r.get("name", ""),
+                "brand": r.get("brand", ""), "model": r.get("model", ""),
+                "price": r.get("price", ""), "old_price": r.get("old_price", ""),
+                "availability": r.get("availability", ""),
+                "specs": specs, "product_url": r.get("product_url", ""),
+            }
 
         # Group URLs by site key, preserving order within each site
         from collections import defaultdict
@@ -1241,24 +1260,13 @@ def fetch_urls_stream():
                 unknown.append(url)
                 continue
 
-            # Resume: try local index first
+            # Resume: look up by exact product_url first
             if resume:
-                key = _key_from_url(url)
-                rows = _price_index.get(key, [])
-                # filter to this site only
-                site_rows = [r for r in rows if r.get("site") == site_key]
-                if site_rows:
-                    r = site_rows[0]
+                row = _url_index.get(_norm_url(url))
+                if row:
                     cached_results.append({
                         "url": url, "status": "ok", "cached": True,
-                        "product": {
-                            "site": r.get("site", ""), "name": r.get("name", ""),
-                            "brand": r.get("brand", ""), "model": r.get("model", ""),
-                            "price": r.get("price", ""), "old_price": r.get("old_price", ""),
-                            "availability": r.get("availability", ""),
-                            "specs": json.loads(r["specs"]) if r.get("specs") and r["specs"] not in ("{}", "") else {},
-                            "product_url": r.get("product_url", ""),
-                        }
+                        "product": _row_to_product(row),
                     })
                     continue  # skip live fetch
 
