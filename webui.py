@@ -30,6 +30,7 @@ from pathlib import Path
 from flask import Flask, Response, jsonify, render_template_string, request, send_file
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 512 * 1024 * 1024  # 512 MB upload limit
 
 # --- Auth ----------------------------------------------------------------
 WEBUI_USER = os.getenv("WEBUI_USER", "admin")
@@ -676,12 +677,17 @@ HTML = """
 <div class="card">
   <label>Результаты (CSV)</label>
   <ul class="files-list" id="filesList"></ul>
-  <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap">
+  <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
     <button class="btn btn-blue" onclick="loadFiles()">🔄 Обновить список</button>
     <a id="btnMerge" class="btn btn-green" href="/download-all" style="text-decoration:none">⬇ Скачать общий список</a>
     <button class="btn btn-red" onclick="clearFiles()">🗑 Очистить все CSV</button>
+    <label class="btn btn-blue" style="cursor:pointer;margin:0" title="Загрузить CSV в базу (для проверки цен)">
+      📂 Загрузить CSV в базу
+      <input type="file" id="uploadCsvInput" accept=".csv" style="display:none" onchange="uploadCsv(this)">
+    </label>
   </div>
   <div id="mergeInfo" style="font-size:13px;color:var(--text-dim);margin-top:8px"></div>
+  <div id="uploadStatus" style="font-size:13px;margin-top:6px;display:none"></div>
 </div>
 
 <div class="card">
@@ -761,6 +767,31 @@ function appendLog(line, cls) {
   else if (/✓|done|готово/i.test(line)) div.className = 'log-ok';
   el.appendChild(div);
   el.scrollTop = el.scrollHeight;
+}
+
+function uploadCsv(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const st = document.getElementById('uploadStatus');
+  st.style.display = 'block';
+  st.style.color = 'var(--dim)';
+  st.textContent = `Загружаю ${file.name} (${(file.size/1024/1024).toFixed(1)} МБ)…`;
+  const fd = new FormData();
+  fd.append('file', file);
+  fetch('/upload-csv', {method:'POST', body: fd})
+    .then(r => r.json())
+    .then(d => {
+      if (d.ok) {
+        st.style.color = '#28a745';
+        st.textContent = `✓ ${d.filename} загружен (${d.rows.toLocaleString('ru')} строк). Индекс перестроен: ${d.index_size.toLocaleString('ru')} URL.`;
+        loadFiles();
+      } else {
+        st.style.color = '#dc3545';
+        st.textContent = '⚠ Ошибка: ' + (d.error || '?');
+      }
+      input.value = '';
+    })
+    .catch(e => { st.style.color='#dc3545'; st.textContent='Ошибка: '+e; input.value=''; });
 }
 
 function clearFiles() {
@@ -1194,6 +1225,35 @@ def download(filename: str):
     if not path.exists() or not path.resolve().is_relative_to(DATA_DIR.resolve()):
         return "Not found", 404
     return send_file(path.resolve(), as_attachment=True)
+
+
+@app.route("/upload-csv", methods=["POST"])
+@requires_auth
+def upload_csv():
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return jsonify({"error": "Файл не выбран"}), 400
+    fname = f.filename
+    if not fname.lower().endswith(".csv"):
+        return jsonify({"error": "Только .csv файлы"}), 400
+    # sanitise filename
+    import re as _re
+    fname = _re.sub(r"[^\w\.\-]", "_", fname)
+    DATA_DIR.mkdir(exist_ok=True)
+    dest = DATA_DIR / fname
+    f.save(str(dest))
+    # count rows
+    try:
+        rows = max(0, dest.read_text(encoding="utf-8", errors="replace").count("\n") - 1)
+    except Exception:
+        rows = 0
+    # force index rebuild
+    global _price_index_mtime
+    with _price_index_lock:
+        _price_index_mtime = 0.0
+        _build_price_index()
+    return jsonify({"ok": True, "filename": fname, "rows": rows,
+                    "index_size": len(_url_index)})
 
 
 @app.route("/debug-url-index")
