@@ -93,6 +93,7 @@ _runtime_env: dict[str, str] = _load_runtime_env()
 # ── URL-fetch job queue ───────────────────────────────────────────────────────
 # POST /fetch-urls stores the URL list here; GET /fetch-urls-stream reads it.
 _fetch_job_urls: list[str] = []
+_fetch_job_resume: bool = False   # if True, use cached index before live fetch
 _fetch_job_lock = threading.Lock()
 
 # ── Price-check index (lazy, rebuilt when CSV files change) ──────────────────
@@ -685,6 +686,10 @@ https://rutector.ru/products/..."></textarea>
     <button class="btn btn-orange" id="btnFetch" onclick="fetchUrls()">🔍 Проверить</button>
     <button class="btn btn-red"    id="btnFetchStop" onclick="stopFetch()" disabled>⏹ Стоп</button>
     <button class="btn btn-blue" onclick="document.getElementById('checkInput').value='';document.getElementById('checkResults').innerHTML='';document.getElementById('checkStatus').textContent=''">✕ Очистить</button>
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--dim);cursor:pointer;font-family:var(--font-body);text-transform:none;letter-spacing:normal;font-weight:normal;margin:0">
+      <input type="checkbox" id="fetchResume" checked style="accent-color:var(--accent);width:14px;height:14px">
+      Брать из базы если есть
+    </label>
     <span id="checkStatus" style="font-size:13px;color:var(--dim)"></span>
   </div>
   <div id="checkResults"></div>
@@ -831,11 +836,12 @@ function fetchUrls() {
   const total = urls.split(/\\r?\\n/).filter(l => l.trim()).length;
   let done = 0, ok = 0, err = 0;
 
+  const resume = document.getElementById('fetchResume').checked;
   // Step 1: POST the URL list
   fetch('/fetch-urls', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({urls})
+    body: JSON.stringify({urls, resume})
   }).then(r => r.json()).then(d => {
     if (d.error) { st.textContent = '⚠ ' + d.error; resetFetchBtns(); return; }
     // Step 2: open EventSource to stream results
@@ -885,6 +891,7 @@ function buildFetchItem(d) {
   const p = d.product;
   const price = p.price ? `${Number(p.price).toLocaleString('ru')} ₽` : (p.availability || 'по запросу');
   const old_price = p.old_price ? `<s style="color:var(--dim);font-size:12px">${Number(p.old_price).toLocaleString('ru')} ₽</s> ` : '';
+  const cachedBadge = d.cached ? `<span style="font-size:11px;background:rgba(124,156,255,.18);color:var(--accent);padding:2px 7px;border-radius:8px;margin-left:4px">из базы</span>` : '';
   // format specs
   let specsHtml = '';
   if (p.specs && Object.keys(p.specs).length) {
@@ -898,7 +905,7 @@ function buildFetchItem(d) {
     <div class="cr-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="cr-query" style="font-weight:normal">${esc(p.name || urlShort)}</span>
       <span style="display:flex;align-items:center;gap:8px;flex-shrink:0">
-        ${old_price}<span class="cr-price">${esc(price)}</span>${avail}
+        ${old_price}<span class="cr-price">${esc(price)}</span>${cachedBadge}${avail}
         <a href="${esc(d.url)}" target="_blank" style="color:var(--link);font-size:13px">↗</a>
       </span>
     </div>
@@ -1182,13 +1189,14 @@ def download(filename: str):
 @requires_auth
 def fetch_urls():
     """Store URL list for the SSE stream endpoint."""
-    global _fetch_job_urls
+    global _fetch_job_urls, _fetch_job_resume
     data = request.get_json() or {}
     urls = [u.strip() for u in (data.get("urls") or "").splitlines() if u.strip()]
     if not urls:
         return jsonify({"error": "Список пуст"}), 400
     with _fetch_job_lock:
         _fetch_job_urls = urls
+        _fetch_job_resume = bool(data.get("resume", False))
     return jsonify({"ok": True, "count": len(urls)})
 
 
@@ -1198,29 +1206,69 @@ def fetch_urls_stream():
     """SSE: scrape stored URLs — parallel per site, sequential within each site."""
     with _fetch_job_lock:
         urls = list(_fetch_job_urls)
+        resume = _fetch_job_resume
 
     def generate():
         import dataclasses as _dc
         from urllib.parse import urlparse
         from monitor.registry import ALL_SCRAPERS
+        import re as _re
 
         env = os.environ.copy()
         env.update(_runtime_env)
+
+        # If resume mode — build/refresh the local CSV index
+        if resume:
+            with _price_index_lock:
+                _build_price_index()
+
+        def _key_from_url(url: str) -> str:
+            """Best-effort normalized key from a competitor URL slug."""
+            slug = urlparse(url).path.rstrip("/").rsplit("/", 1)[-1]
+            return _re.sub(r"[^A-ZА-ЯЁ0-9]", "", slug.upper())
 
         # Group URLs by site key, preserving order within each site
         from collections import defaultdict
         site_urls: dict[str, list[str]] = defaultdict(list)
         unknown: list[str] = []
+        cached_results: list[dict] = []
+
         for url in urls:
             host = urlparse(url).netloc.lstrip("www.")
-            key = next((k for k in ALL_SCRAPERS
-                        if host == k or host.endswith("." + k)), None)
-            if key:
-                site_urls[key].append(url)
-            else:
+            site_key = next((k for k in ALL_SCRAPERS
+                             if host == k or host.endswith("." + k)), None)
+            if not site_key:
                 unknown.append(url)
+                continue
 
-        # Emit unknown-site errors immediately
+            # Resume: try local index first
+            if resume:
+                key = _key_from_url(url)
+                rows = _price_index.get(key, [])
+                # filter to this site only
+                site_rows = [r for r in rows if r.get("site") == site_key]
+                if site_rows:
+                    r = site_rows[0]
+                    cached_results.append({
+                        "url": url, "status": "ok", "cached": True,
+                        "product": {
+                            "site": r.get("site", ""), "name": r.get("name", ""),
+                            "brand": r.get("brand", ""), "model": r.get("model", ""),
+                            "price": r.get("price", ""), "old_price": r.get("old_price", ""),
+                            "availability": r.get("availability", ""),
+                            "specs": json.loads(r["specs"]) if r.get("specs") and r["specs"] not in ("{}", "") else {},
+                            "product_url": r.get("product_url", ""),
+                        }
+                    })
+                    continue  # skip live fetch
+
+            site_urls[site_key].append(url)
+
+        # Emit cached hits immediately
+        for item in cached_results:
+            yield _sse(item)
+
+        # Emit unknown-site errors
         for url in unknown:
             host = urlparse(url).netloc.lstrip("www.")
             yield _sse({"url": url, "status": "unknown_site",
