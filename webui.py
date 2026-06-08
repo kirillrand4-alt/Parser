@@ -828,7 +828,7 @@ function fetchUrls() {
   document.getElementById('btnFetch').disabled = true;
   document.getElementById('btnFetchStop').disabled = false;
 
-  const total = urls.split('\n').filter(l => l.trim()).length;
+  const total = urls.split(/\\r?\\n/).filter(l => l.trim()).length;
   let done = 0, ok = 0, err = 0;
 
   // Step 1: POST the URL list
