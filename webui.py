@@ -1389,13 +1389,29 @@ def fetch_urls_stream():
 
         def scrape_site(site_key: str, site_url_list: list[str]) -> None:
             try:
+                # Ensure proxy env vars are visible to HttpClient.__init__ so the
+                # proxy (and IP-refresh) are set up the normal way, before any
+                # request is made.
+                ukey = site_key.replace(".", "_").replace("-", "_").upper()
+                proxy = env.get(f"PROXY__{ukey}") or env.get("PROXY", "")
+                refresh = env.get(f"PROXY_REFRESH__{ukey}") or env.get("PROXY_REFRESH", "")
+                if proxy:
+                    os.environ[f"PROXY__{ukey}"] = proxy
+                    if refresh:
+                        os.environ[f"PROXY_REFRESH__{ukey}"] = refresh
                 cls = ALL_SCRAPERS[site_key]
                 inst = cls()
-                proxy = (env.get(f"PROXY__{site_key.replace('.','_').replace('-','_').upper()}")
-                         or env.get("PROXY", ""))
-                if proxy:
+                if proxy and not inst.client._using_proxy:
                     inst.client._proxy_url = proxy
                     inst.client._enable_proxy()
+                # Always bypass the HTTP cache for live checks so a previously
+                # cached (blocked) page is never served — every request goes
+                # fresh through the proxy.
+                _orig_get = inst.client.get
+                def _fresh_get(*a, **kw):
+                    kw.setdefault("force_refresh", True)
+                    return _orig_get(*a, **kw)
+                inst.client.get = _fresh_get
             except Exception as e:
                 for url in site_url_list:
                     result_q.put({"url": url, "status": "error",
