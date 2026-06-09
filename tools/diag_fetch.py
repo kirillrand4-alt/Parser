@@ -28,9 +28,10 @@ from bs4 import BeautifulSoup  # noqa: E402
 from monitor.registry import ALL_SCRAPERS  # noqa: E402
 
 BLOCK_MARKERS = (
-    "spamfirewall", "ddos-guard", "cloudflare", "attention required",
-    "access denied", "доступ запрещ", "проверка браузера", "checking your browser",
-    "captcha", "are you human", "request blocked", "403 forbidden",
+    "spamfirewall", "ddos-guard", "attention required!",
+    "доступ запрещ", "проверка браузера", "checking your browser",
+    "are you human", "request blocked", "you have been blocked",
+    "вы заблокированы",
 )
 
 

@@ -1484,10 +1484,13 @@ def fetch_urls_stream():
                 result_q.put({"_site_done": site_key})
                 return
 
-            _BLOCK_MARKERS = ("spamfirewall", "access denied", "403 forbidden",
-                              "cloudflare", "ddos-guard", "you have been blocked",
-                              "проверка браузера", "доступ запрещ", "captcha",
-                              "attention required", "checking your browser")
+            # Strong, unambiguous block-page phrases only. Generic words like
+            # "captcha"/"cloudflare" appear on normal pages (recaptcha widgets,
+            # CDN assets) and caused false positives, so they're excluded.
+            _BLOCK_MARKERS = ("spamfirewall", "ddos-guard", "you have been blocked",
+                              "request blocked", "проверка браузера",
+                              "checking your browser", "attention required!",
+                              "доступ запрещ", "вы заблокированы")
 
             def _classify_empty(u: str) -> tuple[str, str]:
                 """Why did parse_product return None? Distinguish block vs no-data."""
