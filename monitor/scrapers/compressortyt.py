@@ -371,12 +371,38 @@ class CompressortytScraper(BaseScraper):
         return ""
 
     def _extract_specs(self, soup: BeautifulSoup) -> dict:
+        # Method 0: native div-based spec rows. The product page renders specs
+        # as .options-table__item (caption/value divs) inside
+        # #product-specifications, plus a quick-facts block in the header.
+        # Scoped to the product's own containers so analog products'
+        # .product__option-* rows are not picked up.
+        specs: dict = {}
+        for item in soup.select(
+                ".productCardSpecifications .options-table__item, "
+                "#product-specifications .options-table__item, "
+                ".product-card__main-options-item"):
+            cap = item.select_one(
+                ".options-table__item-caption, .product-card__main-options-name")
+            val = item.select_one(
+                ".options-table__item-value, .product-card__main-options-value")
+            if not cap or not val:
+                continue
+            for hint in cap.select(".hint"):  # "?" tooltip icon bleeds into text
+                hint.decompose()
+            k = cap.get_text(" ", strip=True).strip().rstrip("?").rstrip(":").strip()
+            v = cell_value(val)
+            if k and v and k not in specs:
+                specs[k] = v
+        if len(specs) >= 3:
+            return specs
+
         # Method 1: specification table rows (skip multi-variant matrices)
         rows = soup.select(
             "table.specs tr, table.characteristics tr, .product-specs tr, .specification tr")
-        specs, is_matrix = parse_spec_table(rows)
-        if is_matrix:
-            specs = {}
+        table_specs, is_matrix = parse_spec_table(rows)
+        if not is_matrix:
+            for k, v in table_specs.items():
+                specs.setdefault(k, v)
 
         # Method 2: dl/dt/dd pairs
         if not specs:
