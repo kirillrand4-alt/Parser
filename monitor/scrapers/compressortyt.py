@@ -355,7 +355,9 @@ class CompressortytScraper(BaseScraper):
             elif availability_raw:
                 series_status = detect_series_status(availability_raw)
 
-        availability = availability_raw or series_status
+        # Don't expose the internal "неизвестно" sentinel as availability text.
+        availability = availability_raw or (
+            series_status if series_status != "неизвестно" else "")
         return availability, series_status
 
     def _extract_replacement(self, soup: BeautifulSoup) -> str:

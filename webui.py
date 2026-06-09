@@ -932,9 +932,9 @@ function fetchUrls() {
         ok++;
         const p = data.product;
         const name = p.name || data.url;
-        const avail = (p.availability || '').toLowerCase();
+        const avail = (p.availability || '').replace(/неизвестно/gi, '').trim();
         const priceStr = p.price ? Number(p.price).toLocaleString('ru') + ' ₽'
-          : avail.includes('снят') ? 'Снято с производства'
+          : avail.toLowerCase().includes('снят') ? 'Снято с производства'
           : avail || 'Цена по запросу';
         fetchLog(`✓ ${name} — ${priceStr}${data.cached ? ' (из базы)' : ''}`, 'log-ok');
       } else {
