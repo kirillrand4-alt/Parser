@@ -23,7 +23,7 @@ from bs4 import BeautifulSoup
 from ..base_scraper import BaseScraper
 from ..models import (
     Product, clean_price, has_discontinued_signal, status_from_availability,
-    extract_brand_from_name, extract_model_from_name,
+    extract_brand_from_name, extract_model_from_name, harvest_specs,
 )
 
 logger = logging.getLogger(__name__)
@@ -189,6 +189,9 @@ class VpkScraper(BaseScraper):
                 v = val_el.get_text(" ", strip=True)
                 if k and v and k not in specs:
                     specs[k] = v
+        if len(specs) < 3:
+            for k, v in harvest_specs(soup).items():
+                specs.setdefault(k, v)
         return specs
 
     def _price(self, soup: BeautifulSoup) -> float | None:

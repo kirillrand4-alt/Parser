@@ -19,7 +19,7 @@ from bs4 import BeautifulSoup
 from ..base_scraper import BaseScraper
 from ..models import (
     Product, clean_price, detect_series_status,
-    extract_model_from_name, parse_spec_table,
+    extract_model_from_name, harvest_specs, parse_spec_table,
 )
 
 logger = logging.getLogger(__name__)
@@ -393,6 +393,11 @@ class CompressortytScraper(BaseScraper):
                 val = el.get("content") or el.get_text(strip=True)
                 if val:
                     specs[prop] = val
+
+        # Method 4: universal harvester when site selectors found little
+        if len(specs) < 3:
+            for k, v in harvest_specs(soup).items():
+                specs.setdefault(k, v)
 
         return specs
 

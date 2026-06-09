@@ -135,6 +135,12 @@ def diagnose(url: str, env: dict[str, str]) -> None:
             print("      ни одной цены в тексте — вероятно 'цена по запросу'")
     else:
         print(f"  ✓ ТОВАР НАЙДЕН: {product.name[:60]} — цена {product.price}")
+        specs = product.specs or {}
+        print(f"  характеристики: {len(specs)} шт.")
+        for k, v in list(specs.items())[:40]:
+            print(f"      {k}: {str(v)[:80]}")
+        if len(specs) > 40:
+            print(f"      … и ещё {len(specs) - 40}")
 
 
 def main() -> None:

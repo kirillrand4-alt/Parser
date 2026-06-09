@@ -163,6 +163,88 @@ def parse_spec_table(rows) -> tuple[dict, bool]:
     return specs, False
 
 
+# Keys that are clearly not product characteristics (navigation/junk captured by
+# the generic harvester below).
+_SPEC_JUNK_KEYS = (
+    "корзина", "каталог", "доставка", "оплата", "контакты", "сравнение",
+    "избранное", "отзывы", "вопрос", "статьи", "новости", "акции", "цена",
+    "артикул",
+)
+
+
+def _spec_key_ok(k: str) -> bool:
+    if not k or len(k) > 80:
+        return False
+    low = k.lower()
+    return not any(j in low for j in _SPEC_JUNK_KEYS)
+
+
+def harvest_specs(soup) -> dict:
+    """Universal full-characteristics collector for a product page.
+
+    Walks every structure that typically carries "name: value" pairs:
+    - all 2-/3-column tables (via :func:`parse_spec_table`, skipping
+      comparison matrices),
+    - all <dl> dt/dd pairs,
+    - list items / rows shaped "Название: значение".
+
+    Used by scrapers as a fallback/enricher when the site-specific selector
+    yields few items (layout changed, or specs live in another block).
+    """
+    specs: dict = {}
+
+    # 1. Any table on the page (series comparison matrices are skipped)
+    for table in soup.select("table"):
+        rows = table.select("tr")
+        if not rows:
+            continue
+        parsed, is_matrix = parse_spec_table(rows)
+        if is_matrix:
+            continue
+        for k, v in parsed.items():
+            if _spec_key_ok(k) and len(v) <= 300 and k not in specs:
+                specs[k] = v
+
+    # 2. Any dt/dd definition lists
+    for dl in soup.select("dl"):
+        for dt, dd in zip(dl.find_all("dt"), dl.find_all("dd")):
+            k = collapse_ws(dt.get_text(" ", strip=True)).rstrip(":").strip()
+            v = collapse_ws(dd.get_text(" ", strip=True))
+            if _spec_key_ok(k) and v and len(v) <= 300 and k not in specs:
+                specs[k] = v
+
+    # 3. Paired name/value spans inside characteristic-like containers
+    for item in soup.select(
+        "[class*='propert'] [class*='name'], [class*='charact'] [class*='name'], "
+        "[class*='spec'] [class*='name'], [class*='param'] [class*='name']"
+    ):
+        parent = item.parent
+        if parent is None:
+            continue
+        val_el = parent.select_one("[class*='value'], [class*='val']")
+        if val_el is None or val_el is item:
+            continue
+        k = collapse_ws(item.get_text(" ", strip=True)).rstrip(":").strip()
+        v = collapse_ws(val_el.get_text(" ", strip=True))
+        if _spec_key_ok(k) and v and len(v) <= 300 and k not in specs:
+            specs[k] = v
+
+    # 4. "Название: значение" list items inside spec-like blocks
+    for li in soup.select(
+        "[class*='charact'] li, [class*='spec'] li, [class*='param'] li, "
+        "[class*='propert'] li"
+    ):
+        text = collapse_ws(li.get_text(" ", strip=True))
+        if ":" not in text or len(text) > 200:
+            continue
+        k, _, v = text.partition(":")
+        k, v = k.strip(), v.strip()
+        if _spec_key_ok(k) and v and k not in specs:
+            specs[k] = v
+
+    return specs
+
+
 # Generic type / description words to strip when reducing a product name down to
 # its bare model code (e.g. "Винтовой компрессор Atlas Copco XATS 487" → "XATS 487").
 _MODEL_NOISE_WORDS = (

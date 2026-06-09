@@ -27,7 +27,7 @@ from ..base_scraper import BaseScraper
 from ..models import (
     Product, clean_price, detect_series_status,
     has_discontinued_signal, status_from_availability,
-    extract_model_from_name, parse_spec_table,
+    extract_model_from_name, harvest_specs, parse_spec_table,
 )
 from ..sitemap import collect_product_urls
 
@@ -208,7 +208,11 @@ class PnevmoSkladScraper(BaseScraper):
     def _extract_specs(self, soup: BeautifulSoup) -> tuple[dict, bool]:
         # Full characteristics table is .charstable (also .prodbig__chars-table teaser)
         rows = soup.select("table.charstable tr, .prodbig__chars-table tr")
-        return parse_spec_table(rows)
+        specs, is_matrix = parse_spec_table(rows)
+        if not is_matrix and len(specs) < 3:
+            for k, v in harvest_specs(soup).items():
+                specs.setdefault(k, v)
+        return specs, is_matrix
 
     def _get_image(self, soup: BeautifulSoup) -> str:
         for sel in ("[itemprop='image']", ".product-image img", ".detail-picture img"):

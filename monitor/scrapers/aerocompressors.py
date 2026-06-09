@@ -21,7 +21,7 @@ from bs4 import BeautifulSoup
 from ..base_scraper import BaseScraper
 from ..models import (
     Product, clean_price, has_discontinued_signal, extract_brand_from_name,
-    extract_model_from_name, parse_spec_table,
+    extract_model_from_name, harvest_specs, parse_spec_table,
 )
 from ..sitemap import collect_product_urls
 
@@ -162,7 +162,11 @@ class AerocompressorsScraper(BaseScraper):
 
     def _extract_specs(self, soup: BeautifulSoup) -> tuple[dict, bool]:
         rows = soup.select("table.tech tr, table.characteristics tr, table.params tr")
-        return parse_spec_table(rows)
+        specs, is_matrix = parse_spec_table(rows)
+        if not is_matrix and len(specs) < 3:
+            for k, v in harvest_specs(soup).items():
+                specs.setdefault(k, v)
+        return specs, is_matrix
 
     def _category_from_url(self, url: str) -> str:
         import urllib.parse
