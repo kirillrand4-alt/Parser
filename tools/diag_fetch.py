@@ -115,6 +115,23 @@ def diagnose(url: str, env: dict[str, str]) -> None:
         title = soup.select_one("title")
         print("    <title>:", (title.get_text(strip=True)[:80] if title else "нет"))
         print("    <h1>:   ", (h1.get_text(strip=True)[:80] if h1 else "нет"))
+        # Hunt for the real price markup so we can fix the selector.
+        print("    — поиск цены на странице —")
+        import re as _re
+        # 1) any element with itemprop=price / class containing 'price'
+        for el in soup.select("[itemprop='price'], [class*='price'], [class*='Price'], "
+                               "[class*='cost'], [class*='cena'], [id*='price']")[:12]:
+            txt = el.get_text(" ", strip=True)[:60]
+            content = el.get("content", "")
+            cls = ".".join(el.get("class", [])) or el.get("id", "")
+            print(f"      <{el.name} {cls}> content={content!r} text={txt!r}")
+        # 2) raw text fragments that look like a RUB price
+        price_re = _re.compile(r"[\d][\d  ]{2,}\s*(?:₽|руб|р\.)", _re.I)
+        hits = price_re.findall(soup.get_text(" ", strip=True))
+        if hits:
+            print("      текстовые цены:", hits[:6])
+        else:
+            print("      ни одной цены в тексте — вероятно 'цена по запросу'")
     else:
         print(f"  ✓ ТОВАР НАЙДЕН: {product.name[:60]} — цена {product.price}")
 
