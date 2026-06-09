@@ -896,9 +896,8 @@ function fetchUrls() {
   const urls = document.getElementById('checkInput').value.trim();
   if (!urls) return;
   const st  = document.getElementById('checkStatus');
-  const out = document.getElementById('checkResults');
   const log = document.getElementById('fetchLog');
-  out.innerHTML = ''; log.innerHTML = ''; log.style.display = 'none';
+  log.innerHTML = ''; log.style.display = 'none';
   st.textContent = 'Запускаю…';
   document.getElementById('btnFetch').disabled = true;
   document.getElementById('btnFetchStop').disabled = false;
@@ -939,7 +938,6 @@ function fetchUrls() {
         err++;
         fetchLog(`✗ ${data.url.replace(/https?:\/\/(www\.)?/,'')} — ${data.error||data.status}`, 'log-err');
       }
-      out.insertAdjacentHTML('afterbegin', buildFetchItem(data));
     };
     _fetchEvt.onerror = () => {
       st.textContent = `Ошибка соединения (обработано: ${done}/${total})`;
