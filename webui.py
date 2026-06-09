@@ -1432,11 +1432,11 @@ def fetch_urls_stream():
         def scrape_site(site_key: str, site_url_list: list[str]) -> None:
             try:
                 ukey = site_key.replace(".", "_").replace("-", "_").upper()
-                # Only use site-specific proxy key — never global PROXY — so that
-                # sites without explicit proxy config always go direct, even if
-                # PROXY is set in the OS environment.
-                proxy = env.get(f"PROXY__{ukey}", "")
-                refresh = env.get(f"PROXY_REFRESH__{ukey}", "")
+                # Site-specific proxy first, then fall back to the global PROXY
+                # (saved in settings when site == "all"). This lets a single
+                # proxy entry cover every site in the live checker.
+                proxy = env.get(f"PROXY__{ukey}") or env.get("PROXY", "")
+                refresh = env.get(f"PROXY_REFRESH__{ukey}") or env.get("PROXY_REFRESH", "")
                 cls = ALL_SCRAPERS[site_key]
                 inst = cls()
 
