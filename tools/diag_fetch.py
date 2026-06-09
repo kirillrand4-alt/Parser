@@ -10,6 +10,11 @@ Usage (run on the server, inside the project dir):
     python3 tools/diag_fetch.py https://www.pnevmoteh.ru/vintovoy-kompressor-comprag-av-30-10-bar
     python3 tools/diag_fetch.py URL1 URL2 ...
 
+If the console mangles long pasted URLs, use search mode: give the site and
+a slug fragment, the script finds the full URL in the sitemap itself:
+
+    python3 tools/diag_fetch.py find aerocompressors.ru drb_30-50
+
 Reads the proxy from .runtime_settings.json (the same file the web UI
 saves) or from the PROXY / PROXY__<SITE> environment variables.
 """
@@ -181,13 +186,48 @@ def _spec_markup_hunt(content: bytes) -> None:
         print("      метки характеристик в HTML не найдены — контент грузится JS-ом?")
 
 
+def find_urls(site_key: str, fragment: str, env: dict[str, str]) -> list[str]:
+    """Search the site's own URL listing for slugs containing fragment."""
+    site_key = site_key.lstrip("www.")
+    if site_key not in ALL_SCRAPERS:
+        print(f"  ✗ Неизвестный сайт: {site_key}. Доступны: {', '.join(ALL_SCRAPERS)}")
+        return []
+    ukey = site_key.replace(".", "_").replace("-", "_").upper()
+    proxy = env.get(f"PROXY__{ukey}") or env.get("PROXY", "")
+    inst = ALL_SCRAPERS[site_key]()
+    if proxy and not inst.client._using_proxy:
+        inst.client._proxy_url = proxy
+        inst.client._enable_proxy()
+    inst.client._session.trust_env = False
+    print(f"  получаю список URL сайта {site_key} (может занять минуту)…")
+    urls: list[str] = []
+    for listing in inst.discover():
+        urls.extend(inst.fetch_listing(listing))
+    frag = fragment.lower()
+    hits = [u for u in urls if frag in u.lower()]
+    print(f"  найдено {len(hits)} URL с «{fragment}» (из {len(urls)})")
+    for u in hits[:10]:
+        print("   ", u)
+    return hits
+
+
 def main() -> None:
-    urls = sys.argv[1:]
-    if not urls:
+    args = sys.argv[1:]
+    if not args:
         print(__doc__)
         sys.exit(1)
     env = _load_proxy_env()
-    for url in urls:
+    if args[0] == "find":
+        if len(args) < 3:
+            print("Использование: diag_fetch.py find <site> <фрагмент-слага>")
+            sys.exit(1)
+        hits = find_urls(args[1], args[2], env)
+        # Diagnose the first few matches right away
+        for url in hits[:3]:
+            diagnose(url, env)
+        print("=" * 78)
+        return
+    for url in args:
         diagnose(url, env)
     print("=" * 78)
 
