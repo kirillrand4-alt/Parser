@@ -551,6 +551,18 @@ HTML = """
   details[open] > summary { margin-bottom: 8px; }
 
   /* ── Price checker ── */
+  #fetchLog {
+    margin-top: 12px; background: var(--log-bg, rgba(0,0,0,.35)); border-radius: 8px;
+    border: 1px solid var(--list-border); max-height: 180px; overflow-y: auto;
+    font: 12px ui-monospace,monospace; padding: 8px 12px; display: none;
+    color: var(--log-text, #cdd6f4);
+  }
+  html[data-theme="ivory"] #fetchLog { --log-bg: #f5f0e8; --log-text: #3a2f20; }
+  .fl-line { padding: 1px 0; line-height: 1.6; }
+  .fl-ok   { color: #4caf50; }
+  .fl-err  { color: #ef5350; }
+  .fl-info { color: var(--dim); }
+  .fl-proxy{ color: #ff9800; }
   #checkInput {
     width: 100%; height: 130px; resize: vertical;
     background: var(--input-bg); color: var(--input-text);
@@ -709,6 +721,7 @@ https://rutector.ru/products/..."></textarea>
     </label>
     <span id="checkStatus" style="font-size:13px;color:var(--dim)"></span>
   </div>
+  <div id="fetchLog"></div>
   <div id="checkResults"></div>
 </div>
 
@@ -866,12 +879,23 @@ document.getElementById('site').addEventListener('change', loadSettings);
 // ── Live URL fetcher ───────────────────────────────────────────────────────
 let _fetchEvt = null;
 
+function fetchLog(msg, cls) {
+  const log = document.getElementById('fetchLog');
+  log.style.display = 'block';
+  const now = new Date().toLocaleTimeString('ru', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  log.insertAdjacentHTML('beforeend',
+    `<div class="fl-line ${cls||'fl-info'}">[${now}] ${esc(msg)}</div>`);
+  log.scrollTop = log.scrollHeight;
+}
+
 function fetchUrls() {
   const urls = document.getElementById('checkInput').value.trim();
   if (!urls) return;
   const st  = document.getElementById('checkStatus');
   const out = document.getElementById('checkResults');
-  out.innerHTML = ''; st.textContent = 'Запускаю…';
+  const log = document.getElementById('fetchLog');
+  out.innerHTML = ''; log.innerHTML = ''; log.style.display = 'none';
+  st.textContent = 'Запускаю…';
   document.getElementById('btnFetch').disabled = true;
   document.getElementById('btnFetchStop').disabled = false;
 
@@ -879,14 +903,12 @@ function fetchUrls() {
   let done = 0, ok = 0, err = 0;
 
   const resume = document.getElementById('fetchResume').checked;
-  // Step 1: POST the URL list
   fetch('/fetch-urls', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
     body: JSON.stringify({urls, resume})
   }).then(r => r.json()).then(d => {
     if (d.error) { st.textContent = '⚠ ' + d.error; resetFetchBtns(); return; }
-    // Step 2: open EventSource to stream results
     if (_fetchEvt) _fetchEvt.close();
     _fetchEvt = new EventSource('/fetch-urls-stream');
     _fetchEvt.onmessage = e => {
@@ -894,15 +916,30 @@ function fetchUrls() {
       if (data.done) {
         _fetchEvt.close(); _fetchEvt = null;
         st.textContent = `Готово: ${ok} ОК, ${err} ошибок из ${total}`;
+        fetchLog(`Завершено: ${ok} успешно, ${err} ошибок`, ok > 0 ? 'fl-ok' : 'fl-err');
         resetFetchBtns(); return;
+      }
+      if (data.type === 'log') {
+        const cls = data.level === 'error' ? 'fl-err' : data.level === 'proxy' ? 'fl-proxy' : 'fl-info';
+        fetchLog(data.message, cls); return;
       }
       done++;
       st.textContent = `${done} / ${total}…`;
-      if (data.status === 'ok') ok++; else err++;
+      if (data.status === 'ok') {
+        ok++;
+        const p = data.product;
+        const name = p.name || data.url;
+        const price = p.price ? Number(p.price).toLocaleString('ru') + ' ₽' : (p.availability || 'по запросу');
+        fetchLog(`✓ ${name} — ${price}${data.cached ? ' (из базы)' : ''}`, 'fl-ok');
+      } else {
+        err++;
+        fetchLog(`✗ ${data.url.replace(/https?:\/\/(www\.)?/,'')} — ${data.error||data.status}`, 'fl-err');
+      }
       out.insertAdjacentHTML('afterbegin', buildFetchItem(data));
     };
     _fetchEvt.onerror = () => {
       st.textContent = `Ошибка соединения (обработано: ${done}/${total})`;
+      fetchLog('Соединение прервано', 'fl-err');
       resetFetchBtns();
     };
   }).catch(e => { st.textContent = 'Ошибка: ' + e; resetFetchBtns(); });
@@ -1387,32 +1424,43 @@ def fetch_urls_stream():
             global _price_index_mtime
             _price_index_mtime = 0.0
 
+        def _log(message: str, level: str = "info") -> None:
+            result_q.put({"type": "log", "level": level, "message": message})
+
         def scrape_site(site_key: str, site_url_list: list[str]) -> None:
             try:
-                # Ensure proxy env vars are visible to HttpClient.__init__ so the
-                # proxy (and IP-refresh) are set up the normal way, before any
-                # request is made.
                 ukey = site_key.replace(".", "_").replace("-", "_").upper()
-                # Site-specific proxy takes priority; fall back to per-site key only
-                # (do NOT use the global PROXY var here — that would force all sites
-                # through the proxy even if they're not blocked).
+                # Only use site-specific proxy key — never global PROXY — so that
+                # sites without explicit proxy config always go direct, even if
+                # PROXY is set in the OS environment.
                 proxy = env.get(f"PROXY__{ukey}", "")
                 refresh = env.get(f"PROXY_REFRESH__{ukey}", "")
                 cls = ALL_SCRAPERS[site_key]
                 inst = cls()
-                if proxy and not inst.client._using_proxy:
-                    inst.client._proxy_url = proxy
-                    if refresh:
-                        inst.client._proxy_refresh = refresh
-                    inst.client._enable_proxy()
-                # Bypass the HTTP cache for live checks when proxy is active so
-                # a previously cached (blocked) page is never served.
+
                 if proxy:
+                    # Apply proxy (HttpClient may have already picked it up if
+                    # PROXY__{ukey} was in os.environ; otherwise force it now).
+                    if not inst.client._using_proxy:
+                        inst.client._proxy_url = proxy
+                        if refresh:
+                            inst.client._proxy_refresh = refresh
+                        inst.client._enable_proxy()
+                    _log(f"{site_key}: прокси активен ({proxy.split('@')[-1]})", "proxy")
+                    # Bypass cache so a previously cached blocked page isn't served.
                     _orig_get = inst.client.get
                     def _fresh_get(*a, **kw):
                         kw.setdefault("force_refresh", True)
                         return _orig_get(*a, **kw)
                     inst.client.get = _fresh_get
+                else:
+                    # Disable any proxy HttpClient may have picked up from
+                    # a global PROXY in os.environ — this site goes direct.
+                    if inst.client._using_proxy:
+                        inst.client._using_proxy = False
+                        inst.client._proxy_url = ""
+                        inst.client._session.proxies.clear()
+                    _log(f"{site_key}: прямое соединение ({len(site_url_list)} URL)")
             except Exception as e:
                 for url in site_url_list:
                     result_q.put({"url": url, "status": "error",
