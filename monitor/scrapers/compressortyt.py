@@ -18,7 +18,7 @@ from bs4 import BeautifulSoup
 
 from ..base_scraper import BaseScraper
 from ..models import (
-    Product, clean_price, detect_series_status,
+    Product, cell_value, clean_price, detect_series_status,
     extract_model_from_name, harvest_specs, parse_spec_table,
 )
 
@@ -384,7 +384,9 @@ class CompressortytScraper(BaseScraper):
                 dts = dl.select("dt")
                 dds = dl.select("dd")
                 for dt, dd in zip(dts, dds):
-                    specs[dt.get_text(strip=True)] = dd.get_text(strip=True)
+                    v = cell_value(dd)
+                    if v:
+                        specs[dt.get_text(strip=True)] = v
 
         # Method 3: itemprop attributes
         for el in soup.select("[itemprop]"):
