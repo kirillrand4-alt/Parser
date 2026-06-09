@@ -19,11 +19,22 @@ CACHE_DIR = Path(os.getenv("HTTP_CACHE_DIR", "cache"))
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 DEFAULT_HEADERS = {
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,"
+              "image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
     "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
     "Accept-Encoding": "gzip, deflate, br",
     "Connection": "keep-alive",
     "Upgrade-Insecure-Requests": "1",
+    # Modern client-hint / fetch-metadata headers. Many WAFs (incl. the one
+    # on pnevmoteh) flag requests that lack these as non-browser traffic.
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
+    "Cache-Control": "max-age=0",
 }
 
 def _build_user_agents() -> list[str]:
@@ -175,6 +186,14 @@ class HttpClient:
     ) -> requests.Response:
         # Fresh UA per request so requests don't share one fingerprint.
         self._rotate_ua()
+        # Send a same-origin Referer so the request looks like in-site
+        # navigation (a real user clicks through from a listing page).
+        from urllib.parse import urlsplit
+        parts = urlsplit(url)
+        if parts.scheme and parts.netloc:
+            ref_headers = {"Referer": f"{parts.scheme}://{parts.netloc}/",
+                           "Sec-Fetch-Site": "same-origin"}
+            headers = {**ref_headers, **(headers or {})}
         last_exc: requests.HTTPError | None = None
         for attempt in range(self._retry_attempts):
             resp = self._raw_get(url, params, headers, timeout,

@@ -1475,14 +1475,29 @@ def fetch_urls_stream():
                 return
 
             _BLOCK_MARKERS = ("spamfirewall", "access denied", "403 forbidden",
-                              "cloudflare", "ddos-guard", "you have been blocked")
+                              "cloudflare", "ddos-guard", "you have been blocked",
+                              "проверка браузера", "доступ запрещ", "captcha",
+                              "attention required", "checking your browser")
+
+            def _classify_empty(u: str) -> tuple[str, str]:
+                """Why did parse_product return None? Distinguish block vs no-data."""
+                try:
+                    r = inst.client._session.get(u, timeout=20)
+                except Exception as e:
+                    return "error", f"Соединение не удалось: {type(e).__name__}"
+                low = r.text.lower()
+                if r.status_code == 403 or any(m in low for m in _BLOCK_MARKERS):
+                    return "error", f"Заблокировано сайтом (HTTP {r.status_code})"
+                if len(r.content) < 1500:
+                    return "error", f"Заглушка/блок — ответ {len(r.content)} байт"
+                return "skipped", "Нет цены (страница-серия или вёрстка изменилась)"
 
             for url in site_url_list:
                 try:
                     product = inst.parse_product(url)
                     if product is None:
-                        result_q.put({"url": url, "status": "skipped",
-                                      "error": "Страница-серия или нет данных"})
+                        st_kind, msg = _classify_empty(url)
+                        result_q.put({"url": url, "status": st_kind, "error": msg})
                     elif product.name and any(m in product.name.lower() for m in _BLOCK_MARKERS):
                         result_q.put({"url": url, "status": "error",
                                       "error": f"Сайт заблокировал запрос: {product.name[:80]}"})
