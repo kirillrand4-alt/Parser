@@ -1,0 +1,15 @@
+[Unit]
+Description=Parser Web UI
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/parser
+ExecStart=/usr/bin/python3 /opt/parser/webui.py
+Restart=always
+RestartSec=5
+StandardOutput=append:/opt/parser/webui.log
+StandardError=append:/opt/parser/webui.log
+
+[Install]
+WantedBy=multi-user.target
