@@ -105,7 +105,7 @@ class PnevmotehScraper(BaseScraper):
             availability = "В наличии"
         else:
             av_el = soup.select_one("[class*='stock'], [class*='nalichie']")
-            availability = av_el.get_text(" ", strip=True) if av_el else ""
+            availability = av_el.get_text(" ", strip=True) if av_el else ("В наличии" if price else "")
         series_status = status_from_availability(availability) or "в наличии"
         if has_discontinued_signal(page_text):
             series_status = "снято"

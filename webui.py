@@ -932,8 +932,11 @@ function fetchUrls() {
         ok++;
         const p = data.product;
         const name = p.name || data.url;
-        const price = p.price ? Number(p.price).toLocaleString('ru') + ' ₽' : (p.availability || 'по запросу');
-        fetchLog(`✓ ${name} — ${price}${data.cached ? ' (из базы)' : ''}`, 'log-ok');
+        const avail = (p.availability || '').toLowerCase();
+        const priceStr = p.price ? Number(p.price).toLocaleString('ru') + ' ₽'
+          : avail.includes('снят') ? 'Снято с производства'
+          : avail || 'Цена по запросу';
+        fetchLog(`✓ ${name} — ${priceStr}${data.cached ? ' (из базы)' : ''}`, 'log-ok');
       } else {
         err++;
         fetchLog(`✗ ${data.url.replace(/https?:\/\/(www\.)?/,'')} — ${data.error||data.status}`, 'log-err');
