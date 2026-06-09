@@ -583,6 +583,8 @@ HTML = """
   .cr-query { font-weight: 600; font-size: 14px; flex: 1; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .cr-badge { font-size: 12px; padding: 3px 9px; border-radius: 12px; white-space: nowrap; flex-shrink: 0; }
+  .cr-badge-err-text { white-space: normal; overflow-wrap: anywhere; flex-shrink: 1;
+    max-width: 65%; line-height: 1.4; }
   .cr-badge-found   { background: rgba(40,167,69,.18);  color: #28a745; }
   .cr-badge-miss    { background: rgba(220,53,69,.14);  color: #dc3545; }
   .cr-badge-ambig   { background: rgba(255,193,7,.18);  color: #b8860b; }
@@ -966,7 +968,7 @@ function buildFetchItem(d) {
     return `<div class="cr-item">
       <div class="cr-header">
         <span class="cr-query"><a href="${esc(d.url)}" target="_blank" style="color:var(--link)">${esc(urlShort)}</a></span>
-        <span class="cr-badge ${cls}">${label}: ${esc(d.error||'')}</span>
+        <span class="cr-badge cr-badge-err-text ${cls}">${label}: ${esc(d.error||'')}</span>
       </div></div>`;
   }
   const p = d.product;
