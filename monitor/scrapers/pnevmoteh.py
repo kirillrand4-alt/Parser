@@ -23,7 +23,7 @@ from bs4 import BeautifulSoup
 from ..base_scraper import BaseScraper
 from ..models import (
     Product, clean_price, has_discontinued_signal, status_from_availability,
-    extract_model_from_name, harvest_specs,
+    cell_value, extract_model_from_name, harvest_specs,
 )
 from ..sitemap import collect_product_urls
 
@@ -151,7 +151,7 @@ class PnevmotehScraper(BaseScraper):
         for dl in soup.select("dl.clearfix, dl"):
             for dt, dd in zip(dl.find_all("dt"), dl.find_all("dd")):
                 k = dt.get_text(" ", strip=True).rstrip(":").strip()
-                v = dd.get_text(" ", strip=True)
+                v = cell_value(dd)
                 if k and v:
                     specs[k] = v
         if len(specs) < 3:

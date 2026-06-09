@@ -129,6 +129,37 @@ def extract_brand_from_name(name: str) -> str:
     return ""
 
 
+# Boolean spec cells often carry an icon instead of text (a checkmark for
+# "yes", a dash/minus/cross for "no"). Recognise both literal symbols and the
+# typical icon class names so "Безмасляный: —" becomes "Безмасляный: нет".
+_YES_TOKENS = ("check", "tick", "galka", "icon-yes", "icon_yes", "true", "plus")
+_NO_TOKENS = ("minus", "icon-no", "icon_no", "cross", "close", "false", "dash")
+_YES_SYMBOLS = {"✓", "✔", "+", "да", "есть"}
+_NO_SYMBOLS = {"—", "–", "-", "−", "✗", "✕", "×", "нет"}
+
+
+def cell_value(el) -> str:
+    """Text of a spec value cell, with icon-only booleans mapped to да/нет."""
+    text = collapse_ws(el.get_text(" ", strip=True))
+    low = text.lower()
+    if low in _YES_SYMBOLS:
+        return "да"
+    if low in _NO_SYMBOLS:
+        return "нет"
+    if text:
+        return text
+    # No text — look for an icon (svg/i/span/img) hinting yes/no
+    blob = " ".join(
+        " ".join(d.get("class", [])) + " " + (d.get("alt") or "") + " " + (d.get("src") or "")
+        for d in el.find_all(True)
+    ).lower()
+    if any(t in blob for t in _YES_TOKENS):
+        return "да"
+    if any(t in blob for t in _NO_TOKENS):
+        return "нет"
+    return ""
+
+
 def parse_spec_table(rows) -> tuple[dict, bool]:
     """Parse a list of <tr> elements into a specs dict.
 
@@ -145,7 +176,7 @@ def parse_spec_table(rows) -> tuple[dict, bool]:
     parsed: list[list[str]] = []
     for row in rows:
         cells = row.select("td, th")
-        texts = [collapse_ws(c.get_text(" ", strip=True)) for c in cells]
+        texts = [cell_value(c) for c in cells]
         parsed.append([t for t in texts if t])  # keep only non-empty cells
 
     # A comparison matrix has several variant columns: >= 4 non-empty cells in
@@ -209,7 +240,7 @@ def harvest_specs(soup) -> dict:
     for dl in soup.select("dl"):
         for dt, dd in zip(dl.find_all("dt"), dl.find_all("dd")):
             k = collapse_ws(dt.get_text(" ", strip=True)).rstrip(":").strip()
-            v = collapse_ws(dd.get_text(" ", strip=True))
+            v = cell_value(dd)
             if _spec_key_ok(k) and v and len(v) <= 300 and k not in specs:
                 specs[k] = v
 
@@ -225,7 +256,7 @@ def harvest_specs(soup) -> dict:
         if val_el is None or val_el is item:
             continue
         k = collapse_ws(item.get_text(" ", strip=True)).rstrip(":").strip()
-        v = collapse_ws(val_el.get_text(" ", strip=True))
+        v = cell_value(val_el)
         if _spec_key_ok(k) and v and len(v) <= 300 and k not in specs:
             specs[k] = v
 

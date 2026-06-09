@@ -23,7 +23,7 @@ from bs4 import BeautifulSoup
 from ..base_scraper import BaseScraper
 from ..models import (
     Product, clean_price, has_discontinued_signal, status_from_availability,
-    extract_brand_from_name, extract_model_from_name, harvest_specs,
+    cell_value, extract_brand_from_name, extract_model_from_name, harvest_specs,
 )
 
 logger = logging.getLogger(__name__)
@@ -186,7 +186,7 @@ class VpkScraper(BaseScraper):
             val_el = item.select_one(".properties-group__value")
             if name_el and val_el:
                 k = name_el.get_text(" ", strip=True).rstrip(":").strip()
-                v = val_el.get_text(" ", strip=True)
+                v = cell_value(val_el)
                 if k and v and k not in specs:
                     specs[k] = v
         if len(specs) < 3:
