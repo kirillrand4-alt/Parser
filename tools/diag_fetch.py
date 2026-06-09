@@ -141,6 +141,44 @@ def diagnose(url: str, env: dict[str, str]) -> None:
             print(f"      {k}: {str(v)[:80]}")
         if len(specs) > 40:
             print(f"      … и ещё {len(specs) - 40}")
+        if len(specs) < 5:
+            _spec_markup_hunt(resp.content)
+
+
+def _spec_markup_hunt(content: bytes) -> None:
+    """Find where the characteristics actually live in the markup."""
+    import re as _re
+    soup = BeautifulSoup(content, "lxml")
+    labels = _re.compile(
+        r"^(Вид компрессора|Производительность|Максимальное давление|"
+        r"Мощность двигателя|Тип привода|Масса)\b", _re.I)
+    print("    — разведка разметки характеристик —")
+    found = 0
+    for el in soup.find_all(string=labels):
+        node = el.parent
+        # Show the ancestor chain: tag.class > tag.class > ...
+        chain = []
+        cur = node
+        for _ in range(6):
+            if cur is None or cur.name in ("body", "html"):
+                break
+            cls = ".".join(cur.get("class", [])) if cur.get("class") else ""
+            chain.append(f"{cur.name}{('.' + cls) if cls else ''}")
+            cur = cur.parent
+        print("      метка:", str(el).strip()[:40])
+        print("        цепочка:", " < ".join(chain))
+        # Show the surrounding row markup (compact)
+        row = node
+        for _ in range(3):
+            if row.parent is not None and row.parent.name not in ("body", "html"):
+                row = row.parent
+        html = _re.sub(r"\s+", " ", str(row))[:400]
+        print("        HTML:", html)
+        found += 1
+        if found >= 3:
+            break
+    if not found:
+        print("      метки характеристик в HTML не найдены — контент грузится JS-ом?")
 
 
 def main() -> None:
