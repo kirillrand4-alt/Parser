@@ -1393,25 +1393,26 @@ def fetch_urls_stream():
                 # proxy (and IP-refresh) are set up the normal way, before any
                 # request is made.
                 ukey = site_key.replace(".", "_").replace("-", "_").upper()
-                proxy = env.get(f"PROXY__{ukey}") or env.get("PROXY", "")
-                refresh = env.get(f"PROXY_REFRESH__{ukey}") or env.get("PROXY_REFRESH", "")
-                if proxy:
-                    os.environ[f"PROXY__{ukey}"] = proxy
-                    if refresh:
-                        os.environ[f"PROXY_REFRESH__{ukey}"] = refresh
+                # Site-specific proxy takes priority; fall back to per-site key only
+                # (do NOT use the global PROXY var here — that would force all sites
+                # through the proxy even if they're not blocked).
+                proxy = env.get(f"PROXY__{ukey}", "")
+                refresh = env.get(f"PROXY_REFRESH__{ukey}", "")
                 cls = ALL_SCRAPERS[site_key]
                 inst = cls()
                 if proxy and not inst.client._using_proxy:
                     inst.client._proxy_url = proxy
+                    if refresh:
+                        inst.client._proxy_refresh = refresh
                     inst.client._enable_proxy()
-                # Always bypass the HTTP cache for live checks so a previously
-                # cached (blocked) page is never served — every request goes
-                # fresh through the proxy.
-                _orig_get = inst.client.get
-                def _fresh_get(*a, **kw):
-                    kw.setdefault("force_refresh", True)
-                    return _orig_get(*a, **kw)
-                inst.client.get = _fresh_get
+                # Bypass the HTTP cache for live checks when proxy is active so
+                # a previously cached (blocked) page is never served.
+                if proxy:
+                    _orig_get = inst.client.get
+                    def _fresh_get(*a, **kw):
+                        kw.setdefault("force_refresh", True)
+                        return _orig_get(*a, **kw)
+                    inst.client.get = _fresh_get
             except Exception as e:
                 for url in site_url_list:
                     result_q.put({"url": url, "status": "error",
