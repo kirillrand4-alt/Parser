@@ -126,7 +126,8 @@ class PnevmotehScraper(BaseScraper):
             el = soup.select_one(".ui-price-old, .price-old, [class*='old-price'], .pr__card-price-old")
             return clean_price(el.get_text()) if el else None
         # itemprop first, then various class-based selectors used across page types
-        for sel in ("[itemprop='price']", ".ui-price-price", ".pr__card-price"):
+        for sel in ("[itemprop='price']", ".ui-price-price",
+                    "span.pr__card-price"):
             el = soup.select_one(sel)
             if el:
                 val = el.get("content") or el.get_text()
