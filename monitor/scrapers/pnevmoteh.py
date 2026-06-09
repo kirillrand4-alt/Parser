@@ -60,14 +60,23 @@ class PnevmotehScraper(BaseScraper):
         resp = self.client.get(url)
         soup = BeautifulSoup(resp.content, "lxml")
 
-        # Price — bail out (treat as category page) if none found
-        price = self._price(soup)
-        if price is None:
-            return None
-
         page_text = soup.get_text(" ", strip=True)
         h1 = soup.select_one("h1")
         h1_text = h1.get_text(" ", strip=True) if h1 else ""
+
+        # Price. If none is found, the page may still be a real product sold
+        # "по запросу / под заказ" (Drupal renders .card__notprice /
+        # .ui-price-total.under-order-price-total). Keep those — only treat as a
+        # category page when there's no product structure at all.
+        price = self._price(soup)
+        on_request = bool(soup.select_one(
+            ".card__notprice, .under-order-price-total, .ui-price-total"))
+        if price is None:
+            low = page_text.lower()
+            if not (on_request or "цена по запросу" in low or "под заказ" in low):
+                return None  # genuine category / non-product page
+            if not h1_text:
+                return None  # no product title — not a product
 
         # Brand: text after the last "//" in the H1
         brand = ""
@@ -81,7 +90,9 @@ class PnevmotehScraper(BaseScraper):
         model = extract_model_from_name(name, brand)
 
         # Availability
-        if soup.select_one(".in-stock, .commerce-add-to-cart, form[class*='add-to-cart']"):
+        if price is None and on_request:
+            availability = "Цена по запросу"
+        elif soup.select_one(".in-stock, .commerce-add-to-cart, form[class*='add-to-cart']"):
             availability = "В наличии"
         else:
             av_el = soup.select_one("[class*='stock'], [class*='nalichie']")
