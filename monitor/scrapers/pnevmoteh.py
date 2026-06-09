@@ -123,17 +123,18 @@ class PnevmotehScraper(BaseScraper):
 
     def _price(self, soup: BeautifulSoup, old: bool = False) -> float | None:
         if old:
-            el = soup.select_one(".ui-price-old, .price-old, [class*='old-price']")
+            el = soup.select_one(".ui-price-old, .price-old, [class*='old-price'], .pr__card-price-old")
             return clean_price(el.get_text()) if el else None
-        # Prefer the explicit itemprop, then the unit price element
-        el = soup.select_one("[itemprop='price']")
-        if el:
-            val = el.get("content") or el.get_text()
-            p = clean_price(val)
-            if p:
-                return p
-        el = soup.select_one(".ui-price-price")
-        return clean_price(el.get_text()) if el else None
+        # itemprop first, then various class-based selectors used across page types
+        for sel in ("[itemprop='price']", ".ui-price-price",
+                    ".pr__card-price", "[class*='pr__card-price']"):
+            el = soup.select_one(sel)
+            if el:
+                val = el.get("content") or el.get_text()
+                p = clean_price(val)
+                if p and p > 100:   # ignore stray tiny numbers
+                    return p
+        return None
 
     def _extract_specs(self, soup: BeautifulSoup) -> dict:
         specs: dict = {}
