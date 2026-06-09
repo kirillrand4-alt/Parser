@@ -71,9 +71,16 @@ class PnevmotehScraper(BaseScraper):
         price = self._price(soup)
         on_request = bool(soup.select_one(
             ".card__notprice, .under-order-price-total, .ui-price-total"))
+        is_discontinued = has_discontinued_signal(page_text)
         if price is None:
             low = page_text.lower()
-            if not (on_request or "цена по запросу" in low or "под заказ" in low):
+            keep = (on_request
+                    or is_discontinued
+                    or "цена по запросу" in low
+                    or "под заказ" in low
+                    or "снят с производства" in low
+                    or "снято с производства" in low)
+            if not keep:
                 return None  # genuine category / non-product page
             if not h1_text:
                 return None  # no product title — not a product
@@ -90,7 +97,9 @@ class PnevmotehScraper(BaseScraper):
         model = extract_model_from_name(name, brand)
 
         # Availability
-        if price is None and on_request:
+        if price is None and is_discontinued:
+            availability = "Снято с производства"
+        elif price is None and on_request:
             availability = "Цена по запросу"
         elif soup.select_one(".in-stock, .commerce-add-to-cart, form[class*='add-to-cart']"):
             availability = "В наличии"
