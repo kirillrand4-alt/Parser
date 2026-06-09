@@ -1441,13 +1441,16 @@ def fetch_urls_stream():
                 inst = cls()
 
                 if proxy:
-                    # Apply proxy (HttpClient may have already picked it up if
-                    # PROXY__{ukey} was in os.environ; otherwise force it now).
+                    # Apply proxy explicitly (HttpClient may have already picked
+                    # it up from os.environ; if not, force it now).
                     if not inst.client._using_proxy:
                         inst.client._proxy_url = proxy
                         if refresh:
                             inst.client._proxy_refresh = refresh
                         inst.client._enable_proxy()
+                    # Prevent requests from re-reading proxy settings from
+                    # os.environ on every request (merge_environment_settings).
+                    inst.client._session.trust_env = False
                     _log(f"{site_key}: прокси активен ({proxy.split('@')[-1]})", "proxy")
                     # Bypass cache so a previously cached blocked page isn't served.
                     _orig_get = inst.client.get
@@ -1456,12 +1459,13 @@ def fetch_urls_stream():
                         return _orig_get(*a, **kw)
                     inst.client.get = _fresh_get
                 else:
-                    # Disable any proxy HttpClient may have picked up from
-                    # a global PROXY in os.environ — this site goes direct.
-                    if inst.client._using_proxy:
-                        inst.client._using_proxy = False
-                        inst.client._proxy_url = ""
-                        inst.client._session.proxies.clear()
+                    # Force direct connection: clear any proxy set by HttpClient
+                    # from os.environ, AND disable env-based proxy re-injection
+                    # that requests does on every request via merge_environment_settings.
+                    inst.client._using_proxy = False
+                    inst.client._proxy_url = ""
+                    inst.client._session.proxies.clear()
+                    inst.client._session.trust_env = False
                     _log(f"{site_key}: прямое соединение ({len(site_url_list)} URL)")
             except Exception as e:
                 for url in site_url_list:
@@ -1470,12 +1474,18 @@ def fetch_urls_stream():
                 result_q.put({"_site_done": site_key})
                 return
 
+            _BLOCK_MARKERS = ("spamfirewall", "access denied", "403 forbidden",
+                              "cloudflare", "ddos-guard", "you have been blocked")
+
             for url in site_url_list:
                 try:
                     product = inst.parse_product(url)
                     if product is None:
                         result_q.put({"url": url, "status": "skipped",
                                       "error": "Страница-серия или нет данных"})
+                    elif product.name and any(m in product.name.lower() for m in _BLOCK_MARKERS):
+                        result_q.put({"url": url, "status": "error",
+                                      "error": f"Сайт заблокировал запрос: {product.name[:80]}"})
                     else:
                         csv_row = product.to_dict() if hasattr(product, "to_dict") else (
                             _dc.asdict(product) if _dc.is_dataclass(product) else vars(product))
