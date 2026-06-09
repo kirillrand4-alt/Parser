@@ -142,6 +142,20 @@ class RutectorScraper(BaseScraper):
         return clean_price(el.get_text()) if el else None
 
     def _extract_specs(self, soup: BeautifulSoup) -> tuple[dict, bool]:
+        # Primary markup on current product pages: div rows
+        # .pump-specifications__item → __item-name / __item-value (values are
+        # often wrapped in <a> links).
+        specs: dict = {}
+        for item in soup.select(".pump-specifications__item"):
+            name_el = item.select_one("[class*='item-name']")
+            val_el = item.select_one("[class*='item-value']")
+            if name_el and val_el:
+                k = name_el.get_text(" ", strip=True).rstrip(":").strip()
+                v = val_el.get_text(" ", strip=True)
+                if k and v and len(v) <= 300:
+                    specs.setdefault(k, v)
+        if len(specs) >= 3:
+            return specs, False
         rows = soup.select("table.zebra tr, table.props tr, .characteristics tr")
         specs, is_matrix = parse_spec_table(rows)
         if not is_matrix and len(specs) < 3:
