@@ -388,18 +388,28 @@ class CompressortytScraper(BaseScraper):
                     if v:
                         specs[dt.get_text(strip=True)] = v
 
-        # Method 3: itemprop attributes
-        for el in soup.select("[itemprop]"):
-            prop = el.get("itemprop", "")
-            if prop and prop not in ("name", "description", "image", "url", "price", "priceCurrency", "availability", "brand"):
-                val = el.get("content") or el.get_text(strip=True)
-                if val:
-                    specs[prop] = val
-
-        # Method 4: universal harvester when site selectors found little
+        # Method 3: universal harvester when site selectors found little
         if len(specs) < 3:
             for k, v in harvest_specs(soup).items():
                 specs.setdefault(k, v)
+
+        # Method 4: itemprop attributes — only real product properties. Pages
+        # carry Organization/Breadcrumb microdata too (telephone, logo,
+        # itemListElement, ...) which must never land in specs.
+        itemprop_skip = (
+            "name", "description", "image", "url", "price", "pricecurrency",
+            "availability", "brand", "telephone", "email", "logo", "address",
+            "streetaddress", "postalcode", "addresslocality", "addressregion",
+            "addresscountry", "itemlistelement", "item", "position",
+            "contactpoint", "openinghours", "offers", "aggregaterating",
+            "ratingvalue", "reviewcount", "review", "sku",
+        )
+        for el in soup.select("[itemprop]"):
+            prop = el.get("itemprop", "")
+            if prop and prop.lower() not in itemprop_skip:
+                val = el.get("content") or el.get_text(strip=True)
+                if val and len(val) <= 300:
+                    specs.setdefault(prop, val)
 
         return specs
 
