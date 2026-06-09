@@ -552,17 +552,15 @@ HTML = """
 
   /* ── Price checker ── */
   #fetchLog {
-    margin-top: 12px; background: var(--log-bg, rgba(0,0,0,.35)); border-radius: 8px;
-    border: 1px solid var(--list-border); max-height: 180px; overflow-y: auto;
-    font: 12px ui-monospace,monospace; padding: 8px 12px; display: none;
-    color: var(--log-text, #cdd6f4);
+    background: var(--log-bg); border: 1px solid var(--log-border);
+    border-radius: 14px; padding: 16px; margin-top: 12px;
+    font: 13px ui-monospace,monospace; color: var(--log-text);
+    height: 200px; overflow-y: auto;
+    white-space: pre-wrap; word-break: break-all; display: none;
   }
-  html[data-theme="ivory"] #fetchLog { --log-bg: #f5f0e8; --log-text: #3a2f20; }
-  .fl-line { padding: 1px 0; line-height: 1.6; }
-  .fl-ok   { color: #4caf50; }
-  .fl-err  { color: #ef5350; }
-  .fl-info { color: var(--dim); }
-  .fl-proxy{ color: #ff9800; }
+  #fetchLog::-webkit-scrollbar { width: 8px; }
+  #fetchLog::-webkit-scrollbar-thumb { background: rgba(128,128,128,.4); border-radius: 4px; }
+  .fl-proxy { color: #ffd27c; }
   #checkInput {
     width: 100%; height: 130px; resize: vertical;
     background: var(--input-bg); color: var(--input-text);
@@ -714,7 +712,7 @@ https://rutector.ru/products/..."></textarea>
   <div style="margin-top:10px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
     <button class="btn btn-orange" id="btnFetch" onclick="fetchUrls()">🔍 Проверить</button>
     <button class="btn btn-red"    id="btnFetchStop" onclick="stopFetch()" disabled>⏹ Стоп</button>
-    <button class="btn btn-blue" onclick="document.getElementById('checkInput').value='';document.getElementById('checkResults').innerHTML='';document.getElementById('checkStatus').textContent=''">✕ Очистить</button>
+    <button class="btn btn-blue" onclick="document.getElementById('checkInput').value='';document.getElementById('checkResults').innerHTML='';document.getElementById('fetchLog').innerHTML='';document.getElementById('fetchLog').style.display='none';document.getElementById('checkStatus').textContent=''">✕ Очистить</button>
     <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--dim);cursor:pointer;font-family:var(--font-body);text-transform:none;letter-spacing:normal;font-weight:normal;margin:0">
       <input type="checkbox" id="fetchResume" checked style="accent-color:var(--accent);width:14px;height:14px">
       Брать из базы если есть
@@ -883,8 +881,12 @@ function fetchLog(msg, cls) {
   const log = document.getElementById('fetchLog');
   log.style.display = 'block';
   const now = new Date().toLocaleTimeString('ru', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
-  log.insertAdjacentHTML('beforeend',
-    `<div class="fl-line ${cls||'fl-info'}">[${now}] ${esc(msg)}</div>`);
+  const div = document.createElement('div');
+  div.textContent = '[' + now + '] ' + msg;
+  if (cls) div.className = cls;
+  else if (/ошибка|error|failed/i.test(msg)) div.className = 'log-err';
+  else if (/✓|успешно|ок\b/i.test(msg)) div.className = 'log-ok';
+  log.appendChild(div);
   log.scrollTop = log.scrollHeight;
 }
 
@@ -916,11 +918,11 @@ function fetchUrls() {
       if (data.done) {
         _fetchEvt.close(); _fetchEvt = null;
         st.textContent = `Готово: ${ok} ОК, ${err} ошибок из ${total}`;
-        fetchLog(`Завершено: ${ok} успешно, ${err} ошибок`, ok > 0 ? 'fl-ok' : 'fl-err');
+        fetchLog(`Завершено: ${ok} успешно, ${err} ошибок`, ok > 0 ? 'log-ok' : 'log-err');
         resetFetchBtns(); return;
       }
       if (data.type === 'log') {
-        const cls = data.level === 'error' ? 'fl-err' : data.level === 'proxy' ? 'fl-proxy' : 'fl-info';
+        const cls = data.level === 'error' ? 'log-err' : data.level === 'proxy' ? 'fl-proxy' : null;
         fetchLog(data.message, cls); return;
       }
       done++;
@@ -930,16 +932,16 @@ function fetchUrls() {
         const p = data.product;
         const name = p.name || data.url;
         const price = p.price ? Number(p.price).toLocaleString('ru') + ' ₽' : (p.availability || 'по запросу');
-        fetchLog(`✓ ${name} — ${price}${data.cached ? ' (из базы)' : ''}`, 'fl-ok');
+        fetchLog(`✓ ${name} — ${price}${data.cached ? ' (из базы)' : ''}`, 'log-ok');
       } else {
         err++;
-        fetchLog(`✗ ${data.url.replace(/https?:\/\/(www\.)?/,'')} — ${data.error||data.status}`, 'fl-err');
+        fetchLog(`✗ ${data.url.replace(/https?:\/\/(www\.)?/,'')} — ${data.error||data.status}`, 'log-err');
       }
       out.insertAdjacentHTML('afterbegin', buildFetchItem(data));
     };
     _fetchEvt.onerror = () => {
       st.textContent = `Ошибка соединения (обработано: ${done}/${total})`;
-      fetchLog('Соединение прервано', 'fl-err');
+      fetchLog('Соединение прервано', 'log-err');
       resetFetchBtns();
     };
   }).catch(e => { st.textContent = 'Ошибка: ' + e; resetFetchBtns(); });
