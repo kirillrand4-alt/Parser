@@ -1440,6 +1440,16 @@ def fetch_urls_stream():
                 cls = ALL_SCRAPERS[site_key]
                 inst = cls()
 
+                # Apply the UI delay setting to the live checker too (base_scraper
+                # only reads it from os.environ, which this in-process thread does
+                # not have — so override the client directly).
+                dmin = env.get(f"DELAY_MIN__{ukey}") or env.get("DELAY_MIN")
+                dmax = env.get(f"DELAY_MAX__{ukey}") or env.get("DELAY_MAX")
+                if dmin:
+                    inst.client.delay_min = float(dmin)
+                if dmax:
+                    inst.client.delay_max = float(dmax)
+
                 if proxy:
                     # Apply proxy explicitly (HttpClient may have already picked
                     # it up from os.environ; if not, force it now).
