@@ -187,7 +187,17 @@ class VpkScraper(BaseScraper):
             if name_el and val_el:
                 k = name_el.get_text(" ", strip=True).rstrip(":").strip()
                 v = cell_value(val_el)
-                if k and v and k not in specs:
+                if not k or not v:
+                    continue
+                # "Давление" can appear twice: once as a numeric value ("10 бар")
+                # and once as a category label ("Среднего давления"). Split them
+                # into separate keys so the number is never overwritten by text.
+                if k == "Давление":
+                    if any(ch.isdigit() for ch in v):
+                        k = "Давление, бар"
+                    else:
+                        k = "Тип давления"
+                if k not in specs:
                     specs[k] = v
         if len(specs) < 3:
             for k, v in harvest_specs(soup).items():

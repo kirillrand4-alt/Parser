@@ -260,6 +260,8 @@ class CompressortytScraper(BaseScraper):
 
         # --- Availability ---
         availability, series_status = self._extract_availability(soup, page_text)
+        if price is None and not availability:
+            availability = "по запросу"
 
         # --- Replacement model ---
         replacement_model = self._extract_replacement(soup)
@@ -356,8 +358,10 @@ class CompressortytScraper(BaseScraper):
                 series_status = detect_series_status(availability_raw)
 
         # Don't expose the internal "неизвестно" sentinel as availability text.
+        # If nothing found, use "по запросу" so the caller can distinguish
+        # "scraper didn't find the block" from a genuine price-on-request product.
         availability = availability_raw or (
-            series_status if series_status != "неизвестно" else "")
+            series_status if series_status not in ("неизвестно", "") else "по запросу")
         return availability, series_status
 
     def _extract_replacement(self, soup: BeautifulSoup) -> str:
