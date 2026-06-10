@@ -147,6 +147,10 @@ class PnevmoSkladScraper(BaseScraper):
 
         availability_el = soup.select_one(".pricebox__instock, .ltprod__instock, .prodbig__instock")
         availability = availability_el.get_text(" ", strip=True) if availability_el else ""
+        # Some templates render no stock block at all: a numeric price implies
+        # the item is sellable; no price and no block means price-on-request.
+        if not availability:
+            availability = "в наличии" if price else "по запросу"
         # Trust the product's own availability block first; only let strong
         # "снято/архив" signals from the page override it.
         series_status = status_from_availability(availability)

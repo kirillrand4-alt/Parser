@@ -163,6 +163,11 @@ class AerocompressorsScraper(BaseScraper):
     def _extract_specs(self, soup: BeautifulSoup) -> tuple[dict, bool]:
         rows = soup.select("table.tech tr, table.characteristics tr, table.params tr")
         specs, is_matrix = parse_spec_table(rows)
+        # Numeric fields (keys carry a unit, e.g. "Давление, бар") sometimes
+        # hold a literal "нет" — drop those; an empty field is more honest.
+        # Boolean specs (no unit in the key) keep their да/нет values.
+        specs = {k: v for k, v in specs.items()
+                 if not ("," in k and v.strip().lower() == "нет")}
         if not is_matrix and len(specs) < 3:
             for k, v in harvest_specs(soup).items():
                 specs.setdefault(k, v)

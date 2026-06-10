@@ -199,6 +199,14 @@ class VpkScraper(BaseScraper):
                         k = "Тип давления"
                 if k not in specs:
                     specs[k] = v
+        # If the main field carried only the category text, the number usually
+        # lives in a sibling field — promote it so pressure is never lost.
+        if "Давление, бар" not in specs:
+            for src in ("Давление от-до", "Класс давления"):
+                v = specs.get(src, "")
+                if any(ch.isdigit() for ch in v):
+                    specs["Давление, бар"] = v
+                    break
         if len(specs) < 3:
             for k, v in harvest_specs(soup).items():
                 specs.setdefault(k, v)
