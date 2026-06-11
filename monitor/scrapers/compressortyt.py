@@ -255,7 +255,12 @@ class CompressortytScraper(BaseScraper):
 
         # --- Price ---
         price = self._extract_price(soup, "price", "current-price", "product__price")
-        old_price = self._extract_price(soup, "old-price", "price-old", "crossed")
+        # The strike-through old price lives in .product-card__price_sale; no
+        # itemprop fallback here, or the old price would echo the current one.
+        old_price = self._extract_price(
+            soup, "price_sale", "old-price", "price-old", "crossed", itemprop=False)
+        if old_price and price and old_price <= price:
+            old_price = None
         discount_pct = self._calc_discount(price, old_price)
 
         # --- Availability ---
@@ -307,16 +312,22 @@ class CompressortytScraper(BaseScraper):
     # Helpers
     # ------------------------------------------------------------------
 
-    def _extract_price(self, soup: BeautifulSoup, *css_hints: str) -> float | None:
+    def _extract_price(self, soup: BeautifulSoup, *css_hints: str,
+                       itemprop: bool = True) -> float | None:
+        # itemprop content carries the exact machine-readable number — prefer
+        # it over class-based text that may mix current and old prices.
+        if itemprop:
+            el = soup.select_one("[itemprop='price']")
+            if el is not None:
+                p = clean_price(el.get("content") or el.get_text(" "))
+                if p:
+                    return p
         for hint in css_hints:
             el = soup.select_one(f"[class*='{hint}']")
             if el:
-                return clean_price(el.get_text())
-        # Generic fallback: itemprop="price"
-        el = soup.select_one("[itemprop='price']")
-        if el:
-            val = el.get("content") or el.get_text()
-            return clean_price(val)
+                p = clean_price(el.get_text(" "))
+                if p:
+                    return p
         return None
 
     def _calc_discount(self, price: float | None, old_price: float | None) -> float | None:

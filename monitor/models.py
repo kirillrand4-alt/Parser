@@ -9,7 +9,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 
-_PRICE_GARBAGE = re.compile(r"[^\d]")
+# First price-looking token: digit groups with space thousands separators and
+# an optional 1-2 digit decimal tail (",95" kopecks). A 3-digit tail after
+# , / . would be a thousands separator, not kopecks, so it is excluded.
+_PRICE_TOKEN = re.compile(r"\d+(?: \d{3})*(?:[.,]\d{1,2})?(?!\d)")
 _NORM_KEY = re.compile(r"[^A-Z0-9]")
 _WHITESPACE = re.compile(r"\s+")
 
@@ -24,11 +27,24 @@ def collapse_ws(text: str) -> str:
 
 
 def clean_price(raw: str | None) -> float | None:
-    """Strip all non-digit chars (including nbsp, zero-width spaces) and convert."""
+    """Parse the first price-looking number out of raw text.
+
+    Handles NBSP / zero-width / thin-space thousands separators and a 1-2
+    digit decimal tail (",95" kopecks). Taking only the FIRST token protects
+    against markup where current and old prices live in one element (their
+    digits used to concatenate into nonsense like 24984003123000).
+    """
     if not raw:
         return None
-    digits = _PRICE_GARBAGE.sub("", raw)
-    return float(digits) if digits else None
+    text = _WHITESPACE.sub(" ", str(raw).replace("\u200b", " "))
+    m = _PRICE_TOKEN.search(text)
+    if not m:
+        return None
+    token = m.group(0).replace(" ", "").replace(",", ".")
+    try:
+        return float(token)
+    except ValueError:
+        return None
 
 
 def normalize_key(brand: str, model: str) -> str:
