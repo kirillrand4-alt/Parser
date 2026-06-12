@@ -64,7 +64,7 @@ URL-сегменты второго уровня: разрешены тольк�
 Из 91k URL оставляются только те, чей второй путевой сегмент входит в список `COMPRESSOR_SUBCATS` (16 категорий: `vintovye_kompressory`, `osushiteli_vozduha`, `pnevmoinstrument` и т.д.). Региональные поддомены (`novosibirsk.pnevmo-sklad.ru`) канонизируются к `www.pnevmo-sklad.ru`.
 
 ### compressortyt.ru
-Список категорий задан явно: `/stanciya/kompr/vintovye/`, `/stanciya/kompr/porshnevye/` и ещё 8 категорий. Азотные генераторы и нерелевантные категории не включены.
+Основной источник — YML-фид: берётся весь каталог целиком, включая газогенерацию (`/stanciya/gazogeneraciya/generatory-azota/`). Явный список категорий (`/stanciya/kompr/vintovye/` и ещё 9) используется только в резервном HTML-режиме, если фид недоступен.
 
 ### v-p-k.ru
 Единственная категория-точка входа: `/catalog/kompressory/` — сайт уже разделил товары по нужной ветке.
