@@ -34,8 +34,11 @@ MAX_URLS = int(os.getenv("VPK_MAX", "0")) or None
 # v-p-k product slugs are model names ("/product/easy-air/"), so a sitemap slug
 # filter cannot find compressors. Instead we walk the catalog category, which
 # lists exactly the compressors the site counts (~10.5k over ~331 pages).
-CATEGORY = "https://www.v-p-k.ru/catalog/kompressory/"
-MAX_PAGES = 400  # safety cap; real catalog is ~331 pages
+CATEGORIES = [
+    "https://www.v-p-k.ru/catalog/kompressory/",
+    "https://www.v-p-k.ru/catalog/podgotovka-vozdukha/",
+]
+MAX_PAGES = 400  # safety cap per category
 
 _BRAND_KEYS = ("Бренд", "Производитель", "Марка", "Торговая марка")
 
@@ -51,68 +54,57 @@ class VpkScraper(BaseScraper):
         return ["__category__"]
 
     def fetch_listing(self, url: str) -> list[str]:
-        # The catalog walk is ~331 single-threaded pages (5-7 min). If a session
-        # dies mid-walk it used to restart from page 1 every time. We persist the
-        # accumulated URLs and last completed page into the checkpoint every few
-        # pages, and resume from there. Partial state lives under dedicated keys
-        # (vpk_partial_*) so the base scraper's product_urls cache (written only
-        # on a *complete* walk) is never fed a half-built list.
+        # Walk all CATEGORIES sequentially. Progress is saved to the checkpoint
+        # so a resumed run doesn't redo completed pages.
         resume = os.getenv("RESUME", "").strip().lower() in ("1", "true", "yes")
         urls: list[str] = []
-        start_page = 1
         if resume:
             saved = self._checkpoint.get("vpk_partial_urls") or []
-            last = int(self._checkpoint.get("vpk_partial_last_page") or 0)
-            if saved and last:
+            if saved:
                 urls = list(saved)
-                start_page = last + 1
-                logger.info("[v-p-k] resume pagination: %d URLs, continuing from page %d",
-                            len(urls), start_page)
+                logger.info("[v-p-k] resume: loaded %d URLs from checkpoint", len(urls))
         seen: set[str] = set(urls)
 
-        # Per-page timeout: a slow/hung catalog page shouldn't eat 40s × retries.
-        # PAGEN timeouts on a single page are not fatal — log and move on rather
-        # than aborting the whole walk (a transient hiccup used to kill it).
         page_timeout = int(os.getenv("VPK_PAGE_TIMEOUT", "15"))
         persist_every = int(os.getenv("VPK_PERSIST_EVERY", "10"))
-        consecutive_fail = 0
-        for page in range(start_page, MAX_PAGES + 1):
-            page_url = CATEGORY if page == 1 else f"{CATEGORY}?PAGEN_1={page}"
-            try:
-                resp = self.client.get(page_url, timeout=page_timeout)
-            except Exception as exc:
-                consecutive_fail += 1
-                logger.warning("[v-p-k] page %d fetch error (%d in a row): %s",
-                               page, consecutive_fail, exc)
-                # Give up only after several pages fail back-to-back; a lone slow
-                # page shouldn't truncate the catalog. Save progress first.
-                self._persist_pages(page - 1, urls)
-                if consecutive_fail >= 3:
-                    logger.error("[v-p-k] %d pages failed in a row — stopping walk "
-                                 "at page %d (resume with RESUME=1)", consecutive_fail, page)
-                    break
-                continue
+
+        for category in CATEGORIES:
             consecutive_fail = 0
-            soup = BeautifulSoup(resp.content, "lxml")
-            new = 0
-            for a in soup.select("a[href*='/product/']"):
-                href = (a.get("href") or "").split("?")[0]
-                if not href:
+            for page in range(1, MAX_PAGES + 1):
+                page_url = category if page == 1 else f"{category}?PAGEN_1={page}"
+                try:
+                    resp = self.client.get(page_url, timeout=page_timeout)
+                except Exception as exc:
+                    consecutive_fail += 1
+                    logger.warning("[v-p-k] page %d fetch error (%d in a row): %s",
+                                   page, consecutive_fail, exc)
+                    self._persist_pages(page - 1, urls)
+                    if consecutive_fail >= 3:
+                        logger.error("[v-p-k] %d pages failed in a row — stopping walk "
+                                     "at page %d (resume with RESUME=1)", consecutive_fail, page)
+                        break
                     continue
-                full = href if href.startswith("http") else BASE + href
-                if full not in seen:
-                    seen.add(full)
-                    urls.append(full)
-                    new += 1
-            # Bitrix serves the last page's content for out-of-range pages, so a
-            # page that adds no new product link means we've reached the end.
-            if new == 0:
-                break
-            if page % persist_every == 0:
-                logger.info("[v-p-k] catalog page %d, %d URLs so far", page, len(urls))
-                self._persist_pages(page, urls)
-        # Walk finished — drop the partial-progress keys so a later run doesn't
-        # try to resume a completed pagination.
+                consecutive_fail = 0
+                soup = BeautifulSoup(resp.content, "lxml")
+                new = 0
+                for a in soup.select("a[href*='/product/']"):
+                    href = (a.get("href") or "").split("?")[0]
+                    if not href:
+                        continue
+                    full = href if href.startswith("http") else BASE + href
+                    if full not in seen:
+                        seen.add(full)
+                        urls.append(full)
+                        new += 1
+                # Bitrix repeats last page for out-of-range PAGEN → end of category
+                if new == 0:
+                    break
+                if page % persist_every == 0:
+                    logger.info("[v-p-k] %s page %d, %d URLs so far", category, page, len(urls))
+                    self._persist_pages(page, urls)
+            logger.info("[v-p-k] finished %s", category)
+
+        # Walk finished — drop partial-progress keys
         self._checkpoint.pop("vpk_partial_urls", None)
         self._checkpoint.pop("vpk_partial_last_page", None)
         if os.getenv("SHUFFLE", "").strip() in ("1", "true", "yes"):
