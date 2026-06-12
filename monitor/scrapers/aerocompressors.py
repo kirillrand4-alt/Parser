@@ -183,15 +183,26 @@ class AerocompressorsScraper(BaseScraper):
         table value always wins.
         """
         path = url.lower()
+        derived: list[str] = []
+
+        def put(key: str, val: str) -> None:
+            if key not in specs:
+                specs[key] = val
+                derived.append(key)
+
         if "pryamym_privodom" in path:
-            specs.setdefault("Привод", "прямой")
+            put("Привод", "прямой")
         elif "remennym_privodom" in path:
-            specs.setdefault("Привод", "ременной")
+            put("Привод", "ременной")
         if ("chastotn" in path or "invertor" in path
                 or "reguliruemym_privodom" in path):
-            specs.setdefault("Частотный преобразователь", "да")
+            put("Частотный преобразователь", "да")
         if "s_osushitelem" in path:
-            specs.setdefault("Осушитель", "да")
+            put("Осушитель", "да")
+        # Provenance marker so downstream can tell URL-derived fields from
+        # values read off the spec table.
+        if derived:
+            specs["Источник (из URL категории)"] = ", ".join(derived)
 
     def _category_from_url(self, url: str) -> str:
         import urllib.parse
