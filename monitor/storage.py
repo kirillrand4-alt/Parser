@@ -68,6 +68,8 @@ CREATE TABLE IF NOT EXISTS products (
     old_price       REAL,
     discount_pct    REAL,
     currency        TEXT DEFAULT 'RUB',
+    price_on_request INTEGER DEFAULT 0,
+    price_raw       TEXT,
     availability    TEXT,
     series_status   TEXT,
     replacement_model TEXT,
@@ -97,6 +99,13 @@ class Storage:
         # the single connection; all writes are serialized by self._lock below.
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.executescript(CREATE_TABLE_SQL)
+        # Migrate an existing DB created before the price_on_request/price_raw
+        # columns were added (CREATE TABLE IF NOT EXISTS won't alter it).
+        existing = {r[1] for r in self._conn.execute("PRAGMA table_info(products)")}
+        for col, ddl in (("price_on_request", "INTEGER DEFAULT 0"),
+                         ("price_raw", "TEXT")):
+            if col not in existing:
+                self._conn.execute(f"ALTER TABLE products ADD COLUMN {col} {ddl}")
         self._conn.commit()
 
         self._csv_file = open(csv_path, "w", newline="", encoding="utf-8-sig")

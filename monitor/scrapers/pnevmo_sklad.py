@@ -137,6 +137,15 @@ class PnevmoSkladScraper(BaseScraper):
 
         # Price: .pricebox__price holds the number, or "Цена по запросу" → None
         price = self._get_price(soup, ".pricebox__price, .prodsticky__price")
+        # When the visible price block says "по запросу", any number found
+        # elsewhere in the DOM is a stale/hidden price (seen on GA37 VSD+:
+        # page shows "по запросу", export carried 395 960). Trust the text.
+        pricebox = soup.select_one(".pricebox")
+        if pricebox and "по запросу" in pricebox.get_text(" ", strip=True).lower():
+            price = None
+            availability_hint = "цена по запросу"
+        else:
+            availability_hint = ""
         old_price = self._get_price(
             soup, ".pricebox__oldprice, .hprod__oldprice, .price-old")
         # Guard: .hprod__oldprice can pick up an unrelated (lower) number; a real
@@ -150,7 +159,7 @@ class PnevmoSkladScraper(BaseScraper):
         # Some templates render no stock block at all: a numeric price implies
         # the item is sellable; no price and no block means price-on-request.
         if not availability:
-            availability = "в наличии" if price else "по запросу"
+            availability = availability_hint or ("в наличии" if price else "по запросу")
         # Trust the product's own availability block first; only let strong
         # "снято/архив" signals from the page override it.
         series_status = status_from_availability(availability)

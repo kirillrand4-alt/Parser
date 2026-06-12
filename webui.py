@@ -1411,7 +1411,8 @@ def fetch_urls_stream():
         csv_lock = threading.Lock()
         CSV_FIELDS = [
             "site","brand","series","name","model","sku","price","old_price",
-            "discount_pct","currency","availability","series_status",
+            "discount_pct","currency","price_on_request","price_raw",
+            "availability","series_status",
             "replacement_model","specs","category_path","product_url",
             "image_url","normalized_key","scraped_at",
         ]

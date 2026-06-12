@@ -17,13 +17,20 @@ _NORM_KEY = re.compile(r"[^A-Z0-9]")
 _WHITESPACE = re.compile(r"\s+")
 
 
+# Unicode hyphen variants → ASCII "-". The non-breaking hyphen U+2011 shows up
+# in ~550 pnevmoteh names ("F11 ‑ 10 бар") and breaks downstream regexes/search.
+# En/em dashes are NOT touched — they legitimately mark ranges.
+_HYPHENS = {0x2010: "-", 0x2011: "-", 0x2012: "-", 0x2212: "-"}
+
+
 def collapse_ws(text: str) -> str:
     """Collapse every run of whitespace (incl. tabs/newlines) to one space.
 
     Table cells can carry embedded tabs/newlines that survive get_text() and,
-    once serialized into the specs JSON, break the CSV row layout.
+    once serialized into the specs JSON, break the CSV row layout. Unicode
+    hyphen lookalikes are normalized to a plain "-" on the way out.
     """
-    return _WHITESPACE.sub(" ", text).strip()
+    return _WHITESPACE.sub(" ", text.translate(_HYPHENS)).strip()
 
 
 def clean_price(raw: str | None) -> float | None:
@@ -329,6 +336,13 @@ def extract_model_from_name(name: str, brand: str = "") -> str:
     return s or name
 
 
+# Sanity range for a single unit of compressor equipment. Values outside it
+# are markup junk (an SKU read as a price, two prices concatenated) — they go
+# to price_raw for diagnostics and never into the price column.
+PRICE_MIN = 100.0
+PRICE_MAX = 50_000_000.0
+
+
 @dataclass
 class Product:
     site: str
@@ -341,6 +355,8 @@ class Product:
     old_price: float | None = None
     discount_pct: float | None = None
     currency: str = "RUB"
+    price_on_request: int = 0
+    price_raw: str = ""
     availability: str = ""
     series_status: str = "неизвестно"
     replacement_model: str = ""
@@ -352,6 +368,19 @@ class Product:
     scraped_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def __post_init__(self) -> None:
+        if self.price is not None and not (PRICE_MIN <= self.price <= PRICE_MAX):
+            self.price_raw = f"{self.price:g}"
+            self.price = None
+        if self.old_price is not None and not (PRICE_MIN <= self.old_price <= PRICE_MAX):
+            self.old_price = None
+        if not (self.price and self.old_price and self.old_price > self.price):
+            self.discount_pct = None
+        # "Цена по запросу / под заказ" cards: empty price + explicit flag, so
+        # the matcher can tell "no price published" from "price missing".
+        if self.price is None:
+            low = self.availability.lower()
+            if "запрос" in low or "заказ" in low:
+                self.price_on_request = 1
         if not self.normalized_key:
             self.normalized_key = normalize_key(self.brand, self.model or self.name)
 
@@ -375,6 +404,7 @@ class Product:
         return [
             "site", "brand", "series", "name", "model", "sku",
             "price", "old_price", "discount_pct", "currency",
+            "price_on_request", "price_raw",
             "availability", "series_status", "replacement_model",
             "specs", "category_path", "product_url", "image_url",
             "normalized_key", "scraped_at",

@@ -109,7 +109,8 @@ class RutectorScraper(BaseScraper):
             series_status = "под заказ"
         else:
             av = soup.select_one("[class*='in-stock'], [class*='available'], [class*='nalichie']")
-            availability = av.get_text(" ", strip=True) if av else ("в наличии" if price else "")
+            availability = av.get_text(" ", strip=True) if av else (
+                "в наличии" if price else "цена по запросу")
             series_status = status_from_availability(availability) or ("в наличии" if price else "неизвестно")
         if has_discontinued_signal(page_text):
             series_status = "снято"

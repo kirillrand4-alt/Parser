@@ -157,7 +157,8 @@ class VpkScraper(BaseScraper):
             discount_pct = round((old_price - price) / old_price * 100, 1)
 
         av = soup.select_one(".item-stock, [class*='item-stock']")
-        availability = av.get_text(" ", strip=True) if av else ("В наличии" if price else "")
+        availability = av.get_text(" ", strip=True) if av else (
+            "В наличии" if price else "цена по запросу")
         series_status = status_from_availability(availability)
         if series_status == "неизвестно":
             series_status = "под заказ" if "заказ" in availability.lower() else (

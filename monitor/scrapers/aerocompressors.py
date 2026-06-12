@@ -99,6 +99,7 @@ class AerocompressorsScraper(BaseScraper):
         # table; only real product pages have table.tech — require it.
         if not specs:
             return None
+        self._specs_from_url(url, specs)
 
         price = self._price(soup)
         h1 = soup.select_one("h1")
@@ -172,6 +173,25 @@ class AerocompressorsScraper(BaseScraper):
             for k, v in harvest_specs(soup).items():
                 specs.setdefault(k, v)
         return specs, is_matrix
+
+    def _specs_from_url(self, url: str, specs: dict) -> None:
+        """Promote drive/VSD/dryer info from the category path into specs.
+
+        The spec tables almost never carry these fields, but the category
+        slugs do (e.g. ".../s_pryamym_privodom/...", "...s_chastotnym_privodom
+        _serii_ga_vsd/...", ".../s_osushitelem/..."). setdefault only — a real
+        table value always wins.
+        """
+        path = url.lower()
+        if "pryamym_privodom" in path:
+            specs.setdefault("Привод", "прямой")
+        elif "remennym_privodom" in path:
+            specs.setdefault("Привод", "ременной")
+        if ("chastotn" in path or "invertor" in path
+                or "reguliruemym_privodom" in path):
+            specs.setdefault("Частотный преобразователь", "да")
+        if "s_osushitelem" in path:
+            specs.setdefault("Осушитель", "да")
 
     def _category_from_url(self, url: str) -> str:
         import urllib.parse
