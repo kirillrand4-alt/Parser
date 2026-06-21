@@ -28,3 +28,4 @@ cache/*.checkpoint.json
 .idea/
 .vscode/
 *.swp
+data/reports/output/

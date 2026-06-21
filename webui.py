@@ -705,8 +705,9 @@ HTML = """
 <div class="card" id="reportsCard">
   <label>Отчёты по брендам и категориям</label>
   <p style="font-size:13px;color:var(--text-dim);margin-bottom:12px">
-    Выберите бренд или категорию — скрипт возьмёт актуальные цены из последней выгрузки
-    и вернёт обновлённый Excel в том же формате. Желтый = минимальная цена по строке.
+    Выберите бренд или категорию — скрипт откроет страницы конкурентов из файла
+    (по 6 сайтов параллельно), соберёт актуальные цены и вернёт обновлённый Excel
+    в том же формате. Жёлтый = минимальная цена по строке.
   </p>
   <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
     <div style="flex:1;min-width:180px">
@@ -770,6 +771,7 @@ let evtSource = null;
   }).catch(() => {});
 })();
 
+let _reportEvt = null;
 function generateReport() {
   const brand = document.getElementById('reportBrand').value;
   const cat   = document.getElementById('reportCategory').value;
@@ -779,27 +781,42 @@ function generateReport() {
   }
   const name = brand || cat;
   const kind = brand ? 'brand' : 'category';
-  status.innerHTML = '⏳ Формирую отчёт, подождите…';
-  document.getElementById('btnGenReport').disabled = true;
-  fetch(`/reports/generate?name=${encodeURIComponent(name)}&kind=${encodeURIComponent(kind)}`)
-    .then(resp => {
-      if (!resp.ok) return resp.json().then(e => { throw new Error(e.error || resp.statusText); });
-      return resp.blob();
-    })
-    .then(blob => {
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${name}_fresh.xlsx`;
-      document.body.appendChild(a); a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      status.innerHTML = `✅ Готово — файл скачан.`;
-    })
-    .catch(err => {
-      status.innerHTML = `❌ Ошибка: ${err.message}`;
-    })
-    .finally(() => { document.getElementById('btnGenReport').disabled = false; });
+  const btn = document.getElementById('btnGenReport');
+  btn.disabled = true;
+  status.innerHTML = '⏳ Запускаю — открываю страницы конкурентов…';
+
+  fetch('/reports/start', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name, kind})
+  }).then(r => r.json()).then(res => {
+    if (res.error) { status.innerHTML = `❌ ${res.error}`; btn.disabled = false; return; }
+    if (_reportEvt) _reportEvt.close();
+    _reportEvt = new EventSource('/reports/stream');
+    _reportEvt.onmessage = (e) => {
+      const d = JSON.parse(e.data);
+      if (d.type === 'log') {
+        status.innerHTML = '🔄 ' + d.message;
+      } else if (d.type === 'progress') {
+        const pct = d.total ? Math.round(d.done / d.total * 100) : 0;
+        status.innerHTML = `🔄 Проверено ${d.done} / ${d.total} страниц (${pct}%)`;
+      } else if (d.done) {
+        _reportEvt.close(); _reportEvt = null; btn.disabled = false;
+        if (d.error) { status.innerHTML = `❌ ${d.error}`; return; }
+        const url = `/reports/download/${encodeURIComponent(d.file)}`;
+        status.innerHTML = `✅ Готово — найдено цен: ${d.priced} из ${d.total}. ` +
+          `<a href="${url}" style="color:var(--link);font-weight:600">⬇ Скачать ${d.file}</a>`;
+        window.location = url;  // auto-download
+      }
+    };
+    _reportEvt.onerror = () => {
+      if (_reportEvt) { _reportEvt.close(); _reportEvt = null; }
+      btn.disabled = false;
+      if (!status.innerHTML.startsWith('✅'))
+        status.innerHTML = '❌ Соединение прервано. Попробуйте ещё раз.';
+    };
+  }).catch(err => {
+    status.innerHTML = `❌ Ошибка: ${err.message}`; btn.disabled = false;
+  });
 }
 
 function startScrape() {
@@ -1736,9 +1753,11 @@ def _format_specs_brief(specs_raw: str) -> str:
 REPORTS_DIR = Path("data/reports")
 REPORTS_BRANDS_DIR = REPORTS_DIR / "brands"
 REPORTS_CATS_DIR   = REPORTS_DIR / "categories"
+REPORTS_OUT_DIR    = REPORTS_DIR / "output"
 
-# Known brands list — used by report_gen for name-based brand extraction
-from monitor.models import KNOWN_BRANDS as _KNOWN_BRANDS
+# Pending report job (one at a time): {"name", "kind"}
+_report_job: dict = {}
+_report_job_lock = threading.Lock()
 
 
 def _report_list() -> dict:
@@ -1755,31 +1774,158 @@ def reports_list():
     return jsonify(_report_list())
 
 
-@app.route("/reports/generate")
+@app.route("/reports/start", methods=["POST"])
 @requires_auth
-def reports_generate():
-    """Generate refreshed XLSX for a brand or category and return for download."""
-    name = request.args.get("name", "").strip()
-    kind = request.args.get("kind", "brand").strip()   # "brand" or "category"
+def reports_start():
+    """Queue a live report job (fetched by /reports/stream)."""
+    global _report_job
+    data = request.get_json() or {}
+    name = (data.get("name") or "").strip()
+    kind = (data.get("kind") or "brand").strip()
     if not name:
         return jsonify({"error": "name required"}), 400
+    src_dir = REPORTS_BRANDS_DIR if kind == "brand" else REPORTS_CATS_DIR
+    if not (src_dir / f"{name}_spec_review.xlsx").exists():
+        return jsonify({"error": f"not found: {name}"}), 404
+    with _report_job_lock:
+        _report_job = {"name": name, "kind": kind}
+    return jsonify({"ok": True})
 
+
+@app.route("/reports/stream")
+@requires_auth
+def reports_stream():
+    """SSE: fetch all competitor pages for the queued report live, build XLSX.
+
+    Prices are pulled from the actual product pages (the links embedded in each
+    cell), not from the saved CSV. URLs are grouped by site and the 6 sites are
+    fetched concurrently, so the 6 competitor cells of a given row are refreshed
+    in parallel. Emits progress events, then a final {done, file} with the
+    download name.
+    """
+    with _report_job_lock:
+        job = dict(_report_job)
+    if not job:
+        return Response("data: {\"error\": \"no job\"}\n\n", mimetype="text/event-stream")
+
+    name, kind = job["name"], job["kind"]
     src_dir = REPORTS_BRANDS_DIR if kind == "brand" else REPORTS_CATS_DIR
     src_path = src_dir / f"{name}_spec_review.xlsx"
-    if not src_path.exists():
-        return jsonify({"error": f"not found: {src_path.name}"}), 404
 
-    _build_price_index()   # ensure fresh data
+    def generate():
+        from urllib.parse import urlparse
+        from collections import defaultdict
+        from concurrent.futures import ThreadPoolExecutor
+        from monitor.registry import ALL_SCRAPERS
+        from monitor.report_gen import extract_links, generate_report
 
-    from monitor.report_gen import generate_report
-    xlsx_bytes = generate_report(src_path, _price_index, list(_KNOWN_BRANDS))
+        env = os.environ.copy()
+        env.update(_runtime_env)
 
-    fname = f"{name}_fresh_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+        yield _sse({"type": "log", "message": f"Читаю ссылки из «{name}»…"})
+        links = extract_links(src_path)
+        yield _sse({"type": "log", "message": f"Найдено {len(links)} страниц конкурентов."})
+        if not links:
+            yield 'data: {"done": true, "error": "Нет ссылок в файле"}\n\n'
+            return
+
+        # Group URLs by their scraper site key
+        site_urls: dict[str, list[str]] = defaultdict(list)
+        for url in links:
+            host = urlparse(url).netloc.lstrip("www.")
+            key = next((k for k in ALL_SCRAPERS if host == k or host.endswith("." + k)), None)
+            if key:
+                site_urls[key].append(url)
+
+        price_by_url: dict = {}
+        price_lock = threading.Lock()
+        progress = {"done": 0, "total": sum(len(v) for v in site_urls.values())}
+        progress_q: queue.Queue = queue.Queue()
+
+        def fetch_site(site_key: str, urls_list: list[str]) -> None:
+            ukey = site_key.replace(".", "_").replace("-", "_").upper()
+            try:
+                inst = ALL_SCRAPERS[site_key]()
+            except Exception as e:
+                progress_q.put({"type": "log", "level": "error",
+                                "message": f"{site_key}: {e}"})
+                for _ in urls_list:
+                    progress_q.put({"_tick": 1})
+                return
+            proxy = env.get(f"PROXY__{ukey}") or env.get("PROXY", "")
+            if proxy and not inst.client._using_proxy:
+                inst.client._proxy_url = proxy
+                inst.client._proxy_refresh = (env.get(f"PROXY_REFRESH__{ukey}")
+                                              or env.get("PROXY_REFRESH", ""))
+                inst.client._enable_proxy()
+                inst.client._session.trust_env = False
+            else:
+                inst.client._session.trust_env = False
+            for url in urls_list:
+                price: Any = None
+                try:
+                    product = inst.parse_product(url)
+                    if product is not None:
+                        if product.price is not None:
+                            price = float(product.price)
+                        elif getattr(product, "price_on_request", 0):
+                            price = "По запросу"
+                except Exception:
+                    price = None
+                with price_lock:
+                    price_by_url[url] = price
+                progress_q.put({"_tick": 1})
+            try:
+                inst.close()
+            except Exception:
+                pass
+
+        # Launch one worker per site (≤6) so a row's competitor cells fetch in parallel
+        pool = ThreadPoolExecutor(max_workers=max(1, len(site_urls)))
+        for site_key, urls_list in site_urls.items():
+            pool.submit(fetch_site, site_key, urls_list)
+
+        # Drain progress until all URLs processed
+        while progress["done"] < progress["total"]:
+            try:
+                msg = progress_q.get(timeout=1.0)
+            except queue.Empty:
+                yield _sse({"type": "progress", "done": progress["done"],
+                            "total": progress["total"]})
+                continue
+            if "_tick" in msg:
+                progress["done"] += 1
+                if progress["done"] % 10 == 0 or progress["done"] == progress["total"]:
+                    yield _sse({"type": "progress", "done": progress["done"],
+                                "total": progress["total"]})
+            else:
+                yield _sse(msg)
+        pool.shutdown(wait=True)
+
+        yield _sse({"type": "log", "message": "Собираю Excel-файл…"})
+        xlsx_bytes = generate_report(src_path, price_by_url)
+        REPORTS_OUT_DIR.mkdir(parents=True, exist_ok=True)
+        fname = f"{name}_fresh_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+        (REPORTS_OUT_DIR / fname).write_bytes(xlsx_bytes)
+        n_priced = sum(1 for v in price_by_url.values() if isinstance(v, (int, float)))
+        yield _sse({"done": True, "file": fname,
+                    "priced": n_priced, "total": len(price_by_url)})
+
+    return Response(generate(), mimetype="text/event-stream")
+
+
+@app.route("/reports/download/<path:filename>")
+@requires_auth
+def reports_download(filename: str):
+    safe = Path(filename).name
+    fpath = REPORTS_OUT_DIR / safe
+    if not fpath.exists():
+        return jsonify({"error": "not found"}), 404
     return send_file(
-        io.BytesIO(xlsx_bytes),
+        fpath,
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         as_attachment=True,
-        download_name=fname,
+        download_name=safe,
     )
 
 
