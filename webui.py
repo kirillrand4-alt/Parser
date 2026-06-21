@@ -1960,7 +1960,8 @@ def reports_stream():
         yield _sse({"type": "log",
                     "message": ("Собираю частичный Excel-файл…" if cancelled
                                 else "Собираю Excel-файл…")})
-        xlsx_bytes = generate_report(src_path, prices_snapshot)
+        xlsx_bytes = generate_report(src_path, prices_snapshot,
+                                     only_fetched=cancelled)
         REPORTS_OUT_DIR.mkdir(parents=True, exist_ok=True)
         tag = "partial" if cancelled else "fresh"
         fname = f"{name}_{tag}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"

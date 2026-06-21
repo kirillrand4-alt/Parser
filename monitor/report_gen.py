@@ -71,6 +71,7 @@ def extract_links(source_xlsx: Path) -> set[str]:
 def generate_report(
     source_xlsx: Path,
     price_by_url: dict[str, Any],
+    only_fetched: bool = False,
 ) -> bytes:
     """Rebuild the XLSX with fresh prices pulled from ``price_by_url``.
 
@@ -78,6 +79,13 @@ def generate_report(
       - float            (fresh numeric price)
       - "По запросу"     (page exists, price on request)
       - None / missing   (not fetched / unavailable → grey, no value)
+
+    ``only_fetched`` controls what happens to competitor cells whose URL is NOT
+    present in ``price_by_url`` (i.e. not yet checked — relevant for a partial
+    file built after Stop):
+      - False (default): keep the original price from the source file.
+      - True:            blank the cell (→ grey), so the file shows only the
+                         prices that were actually re-checked this run.
 
     All sheets, hyperlinks, the 'Почему сцепилось' explanation column, and the
     salmon review markers are preserved; only competitor prices, the per-row
@@ -131,6 +139,10 @@ def generate_report(
                     if link and link in price_by_url:
                         new_price = price_by_url[link]
                         out.value = new_price if new_price is not None else None
+                    elif only_fetched and link:
+                        # not yet checked → blank (grey) so the partial file
+                        # shows only freshly re-checked prices
+                        out.value = None
                     # else: no link / not fetched → keep original value
                     # Keep the hyperlink only when the cell still shows something;
                     # an empty cell + hyperlink makes openpyxl render the URL text.
