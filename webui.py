@@ -725,8 +725,12 @@ HTML = """
     <button class="btn btn-green" id="btnGenReport" onclick="generateReport()" style="flex:0 0 auto">
       📊 Сформировать
     </button>
+    <button class="btn btn-red" id="btnStopReport" onclick="stopReport()" style="flex:0 0 auto" disabled>
+      ⏹ Стоп
+    </button>
   </div>
   <div id="reportStatus" style="margin-top:10px;font-size:13px;color:var(--dim)"></div>
+  <div id="reportLog" style="display:none;margin-top:10px;max-height:200px;overflow-y:auto;font-family:var(--font-mono,monospace);font-size:12px;line-height:1.5;background:var(--input-bg);border:1px solid var(--input-border);border-radius:var(--input-radius);padding:8px 12px"></div>
 </div>
 
 <div class="card">
@@ -772,6 +776,17 @@ let evtSource = null;
 })();
 
 let _reportEvt = null;
+function _reportLogLine(msg, level) {
+  const box = document.getElementById('reportLog');
+  box.style.display = 'block';
+  const colors = {error: 'var(--danger,#c0392b)', warn: 'var(--accent,#b8902f)'};
+  const time = new Date().toLocaleTimeString();
+  const line = document.createElement('div');
+  line.style.color = colors[level] || 'var(--text-dim)';
+  line.textContent = `[${time}] ${msg}`;
+  box.appendChild(line);
+  box.scrollTop = box.scrollHeight;
+}
 function generateReport() {
   const brand = document.getElementById('reportBrand').value;
   const cat   = document.getElementById('reportCategory').value;
@@ -782,41 +797,57 @@ function generateReport() {
   const name = brand || cat;
   const kind = brand ? 'brand' : 'category';
   const btn = document.getElementById('btnGenReport');
+  const stopBtn = document.getElementById('btnStopReport');
   btn.disabled = true;
+  stopBtn.disabled = false;
+  document.getElementById('reportLog').innerHTML = '';
   status.innerHTML = '⏳ Запускаю — открываю страницы конкурентов…';
 
   fetch('/reports/start', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({name, kind})
   }).then(r => r.json()).then(res => {
-    if (res.error) { status.innerHTML = `❌ ${res.error}`; btn.disabled = false; return; }
+    if (res.error) { status.innerHTML = `❌ ${res.error}`; btn.disabled = false; stopBtn.disabled = true; return; }
     if (_reportEvt) _reportEvt.close();
     _reportEvt = new EventSource('/reports/stream');
     _reportEvt.onmessage = (e) => {
       const d = JSON.parse(e.data);
       if (d.type === 'log') {
         status.innerHTML = '🔄 ' + d.message;
+        _reportLogLine(d.message, d.level);
       } else if (d.type === 'progress') {
         const pct = d.total ? Math.round(d.done / d.total * 100) : 0;
         status.innerHTML = `🔄 Проверено ${d.done} / ${d.total} страниц (${pct}%)`;
       } else if (d.done) {
-        _reportEvt.close(); _reportEvt = null; btn.disabled = false;
-        if (d.error) { status.innerHTML = `❌ ${d.error}`; return; }
+        _reportEvt.close(); _reportEvt = null;
+        btn.disabled = false; stopBtn.disabled = true;
+        if (d.error) { status.innerHTML = `❌ ${d.error}`; _reportLogLine(d.error, 'error'); return; }
         const url = `/reports/download/${encodeURIComponent(d.file)}`;
-        status.innerHTML = `✅ Готово — найдено цен: ${d.priced} из ${d.total}. ` +
+        const head = d.cancelled
+          ? `⏹ Остановлено — проверено ${d.checked} из ${d.all}. Найдено цен: ${d.priced}. `
+          : `✅ Готово — найдено цен: ${d.priced} из ${d.total}. `;
+        status.innerHTML = head +
           `<a href="${url}" style="color:var(--link);font-weight:600">⬇ Скачать ${d.file}</a>`;
+        _reportLogLine((d.cancelled ? 'Частичный файл готов: ' : 'Файл готов: ') + d.file);
         window.location = url;  // auto-download
       }
     };
     _reportEvt.onerror = () => {
       if (_reportEvt) { _reportEvt.close(); _reportEvt = null; }
-      btn.disabled = false;
-      if (!status.innerHTML.startsWith('✅'))
+      btn.disabled = false; stopBtn.disabled = true;
+      if (!status.innerHTML.startsWith('✅') && !status.innerHTML.startsWith('⏹'))
         status.innerHTML = '❌ Соединение прервано. Попробуйте ещё раз.';
     };
   }).catch(err => {
-    status.innerHTML = `❌ Ошибка: ${err.message}`; btn.disabled = false;
+    status.innerHTML = `❌ Ошибка: ${err.message}`; btn.disabled = false; stopBtn.disabled = true;
   });
+}
+function stopReport() {
+  const stopBtn = document.getElementById('btnStopReport');
+  stopBtn.disabled = true;
+  _reportLogLine('Запрос остановки отправлен…', 'warn');
+  document.getElementById('reportStatus').innerHTML = '⏹ Останавливаю — собираю уже проверенное…';
+  fetch('/reports/stop', {method: 'POST'}).catch(() => {});
 }
 
 function startScrape() {
@@ -1758,6 +1789,7 @@ REPORTS_OUT_DIR    = REPORTS_DIR / "output"
 # Pending report job (one at a time): {"name", "kind"}
 _report_job: dict = {}
 _report_job_lock = threading.Lock()
+_report_cancel = threading.Event()
 
 
 def _report_list() -> dict:
@@ -1789,6 +1821,16 @@ def reports_start():
         return jsonify({"error": f"not found: {name}"}), 404
     with _report_job_lock:
         _report_job = {"name": name, "kind": kind}
+    _report_cancel.clear()
+    return jsonify({"ok": True})
+
+
+@app.route("/reports/stop", methods=["POST"])
+@requires_auth
+def reports_stop():
+    """Signal the running report job to stop. Pages already fetched are kept and
+    the partial Excel is built and returned by the still-open stream."""
+    _report_cancel.set()
     return jsonify({"ok": True})
 
 
@@ -1862,6 +1904,8 @@ def reports_stream():
             else:
                 inst.client._session.trust_env = False
             for url in urls_list:
+                if _report_cancel.is_set():
+                    break
                 price: Any = None
                 try:
                     product = inst.parse_product(url)
@@ -1885,8 +1929,14 @@ def reports_stream():
         for site_key, urls_list in site_urls.items():
             pool.submit(fetch_site, site_key, urls_list)
 
-        # Drain progress until all URLs processed
+        # Drain progress until all URLs processed (or the user pressed Stop)
+        cancelled = False
         while progress["done"] < progress["total"]:
+            if _report_cancel.is_set():
+                cancelled = True
+                yield _sse({"type": "log", "level": "warn",
+                            "message": "Останавливаю — собираю то, что успели…"})
+                break
             try:
                 msg = progress_q.get(timeout=1.0)
             except queue.Empty:
@@ -1900,16 +1950,25 @@ def reports_stream():
                                 "total": progress["total"]})
             else:
                 yield _sse(msg)
-        pool.shutdown(wait=True)
+        # On cancel, workers exit at their next URL boundary; don't block long.
+        pool.shutdown(wait=not cancelled)
 
-        yield _sse({"type": "log", "message": "Собираю Excel-файл…"})
-        xlsx_bytes = generate_report(src_path, price_by_url)
+        # Build from whatever prices we have; URLs not fetched keep their
+        # original cell value, so a partial file is still valid.
+        with price_lock:
+            prices_snapshot = dict(price_by_url)
+        yield _sse({"type": "log",
+                    "message": ("Собираю частичный Excel-файл…" if cancelled
+                                else "Собираю Excel-файл…")})
+        xlsx_bytes = generate_report(src_path, prices_snapshot)
         REPORTS_OUT_DIR.mkdir(parents=True, exist_ok=True)
-        fname = f"{name}_fresh_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+        tag = "partial" if cancelled else "fresh"
+        fname = f"{name}_{tag}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
         (REPORTS_OUT_DIR / fname).write_bytes(xlsx_bytes)
-        n_priced = sum(1 for v in price_by_url.values() if isinstance(v, (int, float)))
-        yield _sse({"done": True, "file": fname,
-                    "priced": n_priced, "total": len(price_by_url)})
+        n_priced = sum(1 for v in prices_snapshot.values() if isinstance(v, (int, float)))
+        yield _sse({"done": True, "file": fname, "cancelled": cancelled,
+                    "priced": n_priced, "total": len(prices_snapshot),
+                    "checked": progress["done"], "all": progress["total"]})
 
     return Response(generate(), mimetype="text/event-stream")
 
