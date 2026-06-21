@@ -827,9 +827,8 @@ function generateReport() {
           ? `⏹ Остановлено — проверено ${d.checked} из ${d.all}. Найдено цен: ${d.priced}. `
           : `✅ Готово — найдено цен: ${d.priced} из ${d.total}. `;
         status.innerHTML = head +
-          `<a href="${url}" style="color:var(--link);font-weight:600">⬇ Скачать ${d.file}</a>`;
+          `<a href="${url}" class="btn btn-orange" style="display:inline-block;padding:6px 14px;font-size:13px;text-decoration:none">⬇ Скачать ${d.file}</a>`;
         _reportLogLine((d.cancelled ? 'Частичный файл готов: ' : 'Файл готов: ') + d.file);
-        window.location = url;  // auto-download
       }
     };
     _reportEvt.onerror = () => {
