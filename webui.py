@@ -702,6 +702,32 @@ HTML = """
   <div id="uploadStatus" style="font-size:13px;margin-top:6px;display:none"></div>
 </div>
 
+<div class="card" id="reportsCard">
+  <label>Отчёты по брендам и категориям</label>
+  <p style="font-size:13px;color:var(--text-dim);margin-bottom:12px">
+    Выберите бренд или категорию — скрипт возьмёт актуальные цены из последней выгрузки
+    и вернёт обновлённый Excel в том же формате. Желтый = минимальная цена по строке.
+  </p>
+  <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+    <div style="flex:1;min-width:180px">
+      <div style="font-size:12px;color:var(--dim);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Бренд</div>
+      <select id="reportBrand" style="width:100%;background:var(--input-bg);color:var(--input-text);border:1px solid var(--input-border);border-radius:var(--input-radius);padding:8px 12px;font-size:14px">
+        <option value="">— выберите бренд —</option>
+      </select>
+    </div>
+    <div style="flex:1;min-width:180px">
+      <div style="font-size:12px;color:var(--dim);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Категория</div>
+      <select id="reportCategory" style="width:100%;background:var(--input-bg);color:var(--input-text);border:1px solid var(--input-border);border-radius:var(--input-radius);padding:8px 12px;font-size:14px">
+        <option value="">— выберите категорию —</option>
+      </select>
+    </div>
+    <button class="btn btn-green" id="btnGenReport" onclick="generateReport()" style="flex:0 0 auto">
+      📊 Сформировать
+    </button>
+  </div>
+  <div id="reportStatus" style="margin-top:10px;font-size:13px;color:var(--dim)"></div>
+</div>
+
 <div class="card">
   <label>Проверка цен конкурентов</label>
   <p style="font-size:13px;color:var(--text-dim);margin-bottom:10px">
@@ -727,6 +753,54 @@ https://rutector.ru/products/..."></textarea>
 
 <script>
 let evtSource = null;
+
+// ── Report generation ──────────────────────────────────────────────────────
+(function loadReportLists() {
+  fetch('/reports/list').then(r => r.json()).then(data => {
+    const brandSel = document.getElementById('reportBrand');
+    const catSel   = document.getElementById('reportCategory');
+    (data.brands || []).forEach(b => {
+      const o = document.createElement('option'); o.value = b; o.textContent = b;
+      brandSel.appendChild(o);
+    });
+    (data.categories || []).forEach(c => {
+      const o = document.createElement('option'); o.value = c; o.textContent = c;
+      catSel.appendChild(o);
+    });
+  }).catch(() => {});
+})();
+
+function generateReport() {
+  const brand = document.getElementById('reportBrand').value;
+  const cat   = document.getElementById('reportCategory').value;
+  const status = document.getElementById('reportStatus');
+  if (!brand && !cat) {
+    status.textContent = '⚠ Выберите бренд или категорию.'; return;
+  }
+  const name = brand || cat;
+  const kind = brand ? 'brand' : 'category';
+  status.innerHTML = '⏳ Формирую отчёт, подождите…';
+  document.getElementById('btnGenReport').disabled = true;
+  fetch(`/reports/generate?name=${encodeURIComponent(name)}&kind=${encodeURIComponent(kind)}`)
+    .then(resp => {
+      if (!resp.ok) return resp.json().then(e => { throw new Error(e.error || resp.statusText); });
+      return resp.blob();
+    })
+    .then(blob => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${name}_fresh.xlsx`;
+      document.body.appendChild(a); a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      status.innerHTML = `✅ Готово — файл скачан.`;
+    })
+    .catch(err => {
+      status.innerHTML = `❌ Ошибка: ${err.message}`;
+    })
+    .finally(() => { document.getElementById('btnGenReport').disabled = false; });
+}
 
 function startScrape() {
   const site = document.getElementById('site').value;
@@ -1657,6 +1731,56 @@ def _format_specs_brief(specs_raw: str) -> str:
             f"{k}: {v}" for k, v in list(d.items())[:3] if v)
     except Exception:
         return ""
+
+
+REPORTS_DIR = Path("data/reports")
+REPORTS_BRANDS_DIR = REPORTS_DIR / "brands"
+REPORTS_CATS_DIR   = REPORTS_DIR / "categories"
+
+# Known brands list — used by report_gen for name-based brand extraction
+from monitor.models import KNOWN_BRANDS as _KNOWN_BRANDS
+
+
+def _report_list() -> dict:
+    brands = sorted(p.stem.replace("_spec_review", "") for p in REPORTS_BRANDS_DIR.glob("*.xlsx")) \
+        if REPORTS_BRANDS_DIR.exists() else []
+    cats = sorted(p.stem.replace("_spec_review", "") for p in REPORTS_CATS_DIR.glob("*.xlsx")) \
+        if REPORTS_CATS_DIR.exists() else []
+    return {"brands": brands, "categories": cats}
+
+
+@app.route("/reports/list")
+@requires_auth
+def reports_list():
+    return jsonify(_report_list())
+
+
+@app.route("/reports/generate")
+@requires_auth
+def reports_generate():
+    """Generate refreshed XLSX for a brand or category and return for download."""
+    name = request.args.get("name", "").strip()
+    kind = request.args.get("kind", "brand").strip()   # "brand" or "category"
+    if not name:
+        return jsonify({"error": "name required"}), 400
+
+    src_dir = REPORTS_BRANDS_DIR if kind == "brand" else REPORTS_CATS_DIR
+    src_path = src_dir / f"{name}_spec_review.xlsx"
+    if not src_path.exists():
+        return jsonify({"error": f"not found: {src_path.name}"}), 404
+
+    _build_price_index()   # ensure fresh data
+
+    from monitor.report_gen import generate_report
+    xlsx_bytes = generate_report(src_path, _price_index, list(_KNOWN_BRANDS))
+
+    fname = f"{name}_fresh_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    return send_file(
+        io.BytesIO(xlsx_bytes),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True,
+        download_name=fname,
+    )
 
 
 if __name__ == "__main__":
