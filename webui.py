@@ -64,6 +64,10 @@ SITES = [
     "pnevmo-sklad.ru",
     "aerocompressors.ru",
     "compressortyt.ru",
+    # Zega-brand-only sites
+    "air-energy.ru",
+    "parangonv.ru",
+    "ekk-kompressor.ru",
 ]
 
 DATA_DIR = Path("data")
