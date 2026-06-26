@@ -10,18 +10,23 @@ from .scrapers.vpk import VpkScraper
 from .scrapers.air_energy import AirEnergyScraper
 from .scrapers.parangonv import ParangonvScraper
 from .scrapers.ekk_kompressor import EkkKompressorScraper
+from .scrapers.prokompressor import ProkompressorScraper
 from .base_scraper import BaseScraper
 
 ALL_SCRAPERS: dict[str, type[BaseScraper]] = {
+    # Competitor sites
     "compressortyt.ru": CompressortytScraper,
     "pnevmo-sklad.ru": PnevmoSkladScraper,
     "pnevmoteh.ru": PnevmotehScraper,
     "rutector.ru": RutectorScraper,
     "aerocompressors.ru": AerocompressorsScraper,
     "v-p-k.ru": VpkScraper,
+    # Zega-brand-only sites
     "air-energy.ru": AirEnergyScraper,
     "parangonv.ru": ParangonvScraper,
     "ekk-kompressor.ru": EkkKompressorScraper,
+    # Our own site
+    "prokompressor.ru": ProkompressorScraper,
 }
 
 

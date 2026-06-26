@@ -58,6 +58,7 @@ def requires_auth(f):
 
 SITES = [
     "all",
+    "prokompressor.ru",  # own site
     "rutector.ru",
     "v-p-k.ru",
     "pnevmoteh.ru",
