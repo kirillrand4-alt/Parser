@@ -47,6 +47,21 @@ string xpSubmit     = "//button[@type='submit']";            // кнопка о�
 // Признак, что форма отправлена и письмо ушло (по желанию):
 string sentText     = "письмо";                              // подстрока на странице после отправки (нижн. регистр); "" пропустить
 
+// --- Способ чтения письма-подтверждения ---
+//   "imap"      — по IMAP с паролём приложения (надёжно, без входа в браузер).
+//   "gmail_web" — открыть Gmail в ЗАРАНЕЕ авторизованном профиле и прочитать письмо.
+//                 Профиль готовится один раз вручную: prepare_google_profile.cs.
+string emailReadMode      = "imap";
+
+// --- Профиль браузера (для gmail_web и/или входа через Google на checko) ---
+//   Путь берётся из CSV-колонки "profile"; загружается перед работой с аккаунтом.
+bool   loadProfile        = true;   // false = профиль не грузим
+
+// XPath для режима gmail_web (Gmail в браузере). При смене вёрстки подправьте.
+string gmailSearchUrl     = @"https://mail.google.com/mail/u/0/#search/from%3Achecko+newer_than%3A1d";
+string xpGmailFirstMail   = "//tr[contains(@class,'zA')][1]"; // первая строка списка писем
+// После открытия письма ссылка ищется тем же confirmLinkRegex по тексту страницы.
+
 // --- IMAP (Gmail) для чтения письма-подтверждения ---
 string imapHost           = "imap.gmail.com";
 int    imapPort           = 993;
@@ -130,6 +145,36 @@ Func<string,string,string,string> getConfirmLink = (imapUser, imapPass, fromFilt
     }
 };
 
+// ---- Gmail в браузере (профиль уже авторизован через prepare_google_profile) ----
+// Открывает поиск писем, заходит в первое, ищет ссылку по confirmLinkRegex.
+Func<string> getConfirmLinkGmailWeb = () => {
+    try {
+        instance.ActiveTab.Navigate(gmailSearchUrl, "");
+        instance.ActiveTab.WaitDownloading();
+        System.Threading.Thread.Sleep(3000);   // Gmail дорисовывает список асинхронно
+
+        // Если Gmail попросил войти — значит сессии в профиле нет.
+        string url = instance.ActiveTab.URL.ToLower();
+        if (url.Contains("signin") || url.Contains("servicelogin")) {
+            project.SendWarningToLog("Gmail не авторизован в профиле — подготовьте prepare_google_profile.cs", true);
+            return null;
+        }
+
+        var mail = instance.ActiveTab.FindElementByXPath(xpGmailFirstMail, 0);
+        if (mail.IsVoid) return null;           // писем ещё нет
+        mail.Click();
+        instance.ActiveTab.WaitDownloading();
+        System.Threading.Thread.Sleep(2000);
+
+        var link = System.Text.RegularExpressions.Regex.Match(
+            instance.ActiveTab.DocumentText, confirmLinkRegex);
+        return link.Success ? link.Value : null;
+    } catch (Exception ex) {
+        project.SendWarningToLog("Gmail-web ошибка: " + ex.Message, true);
+        return null;
+    }
+};
+
 // --------------------------- Загрузка прокси ---------------------------
 var proxies = new System.Collections.Generic.List<string>();
 if (!string.IsNullOrEmpty(proxyListPath) && System.IO.File.Exists(proxyListPath))
@@ -181,9 +226,10 @@ for (int r = 1; r < lines.Length; r++)
 {
     if (string.IsNullOrWhiteSpace(lines[r])) continue;
     var row = lines[r].Split(';');
-    string email = col(row, "email");
-    string pass  = col(row, "password");
-    string appPw = col(row, "email_app_password");
+    string email       = col(row, "email");
+    string pass        = col(row, "password");
+    string appPw       = col(row, "email_app_password");
+    string profilePath = col(row, "profile");
     if (string.IsNullOrEmpty(appPw)) appPw = imapAppPasswordDef;
 
     project.SendInfoToLog("=== Регистрация: " + email + " ===", true);
@@ -195,6 +241,19 @@ for (int r = 1; r < lines.Length; r++)
             fail++; report.AppendLine(email + ";SKIP;нет живой прокси");
             project.SendWarningToLog("Пропуск " + email + ": нет живой прокси", true);
             continue;
+        }
+
+        // загружаем заранее авторизованный профиль (сессия Gmail/Google)
+        if (loadProfile && !string.IsNullOrEmpty(profilePath)) {
+            if (System.IO.File.Exists(profilePath)) {
+                instance.LoadProfileFromFile(profilePath);
+                project.SendInfoToLog("Профиль загружен: " + profilePath, false);
+            } else if (emailReadMode == "gmail_web") {
+                fail++; report.AppendLine(email + ";SKIP;нет профиля " + profilePath);
+                project.SendWarningToLog("Нет профиля для gmail_web: " + profilePath +
+                    " — подготовьте prepare_google_profile.cs", true);
+                continue;
+            }
         }
 
         instance.ActiveTab.Navigate(regUrl, "");
@@ -231,9 +290,11 @@ for (int r = 1; r < lines.Length; r++)
         while (waited < mailWaitSeconds) {
             System.Threading.Thread.Sleep(mailPollSeconds * 1000);
             waited += mailPollSeconds;
-            link = getConfirmLink(email, appPw, mailFromFilter);
+            link = (emailReadMode == "gmail_web")
+                 ? getConfirmLinkGmailWeb()
+                 : getConfirmLink(email, appPw, mailFromFilter);
             if (link != null) break;
-            project.SendInfoToLog("Жду письмо... " + waited + "s", false);
+            project.SendInfoToLog("Жду письмо (" + emailReadMode + ")... " + waited + "s", false);
         }
 
         if (link == null) {
