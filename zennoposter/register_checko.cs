@@ -54,6 +54,13 @@ string sentText     = "";                                    // подстрок
 //                 Профиль готовится один раз вручную: prepare_google_profile.cs.
 string emailReadMode      = "imap";
 
+// --- Пароль для аккаунта на checko ---
+//   true  — пароль на checko = ПАРОЛЬ ОТ ПОЧТЫ (CSV-колонка email_password).
+//           ВНИМАНИЕ: повторное использование пароля почты небезопасно —
+//           при утечке checko раскроется и доступ к почте. Осознанный выбор.
+//   false — берётся отдельный пароль из CSV-колонки password.
+bool   siteSameAsEmailPassword = true;
+
 // --- Профиль браузера (нужен для режима gmail_web) ---
 //   Путь берётся из CSV-колонки "profile"; загружается перед работой с аккаунтом.
 //   (Вход через Google на самом checko отключён сервисом, для регистрации не нужен.)
@@ -245,8 +252,20 @@ for (int r = 1; r < lines.Length; r++)
     if (string.IsNullOrWhiteSpace(lines[r])) continue;
     var row = lines[r].Split(';');
     string email       = col(row, "email");
-    string pass        = col(row, "password");
-    string appPw       = col(row, "email_app_password");
+    string emailPass   = col(row, "email_password");         // пароль от почты
+    string sitePassCsv = col(row, "password");               // отдельный пароль на checko (опц.)
+    string appPw       = col(row, "email_app_password");     // пароль приложения для IMAP
+
+    // Какой пароль подставить в форму регистрации checko:
+    string pass;
+    if (siteSameAsEmailPassword) {
+        pass = !string.IsNullOrEmpty(emailPass) ? emailPass : sitePassCsv;
+        if (string.IsNullOrEmpty(emailPass))
+            project.SendWarningToLog("email_password пуст — использую password для " + email, true);
+    } else {
+        pass = sitePassCsv;
+    }
+
     string profilePath = col(row, "profile");
     string accProxy    = col(row, "proxy");   // липкая прокси, назначенная аккаунту
     if (string.IsNullOrEmpty(appPw)) appPw = imapAppPasswordDef;

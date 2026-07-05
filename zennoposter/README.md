@@ -66,8 +66,17 @@ Google-вход **выполняется вручную** — автоввода
 
 ## Быстрый старт (checko.ru)
 
-1. **Данные.** Скопируйте `accounts.example.csv` → `accounts.csv`, впишите свои
-   `email;password;email_app_password`.
+1. **Данные.** Скопируйте `accounts.example.csv` → `accounts.csv`. Колонки:
+   `email` (он же логин), `email_password` (пароль от почты), `password`
+   (отдельный пароль на checko — опционально), `email_app_password` (пароль
+   приложения для IMAP), `profile`, `proxy`.
+
+   **Пароль на checko.** Переключатель `siteSameAsEmailPassword` в коде:
+   - `true` (по умолчанию) — на checko ставится **пароль от почты**
+     (`email_password`). Удобно, но небезопасно: при утечке checko раскроется
+     доступ и к почте. Колонку `password` можно оставить пустой.
+   - `false` — на checko ставится отдельный пароль из колонки `password`
+     (рекомендуется с точки зрения безопасности).
 
 2. **Проект.** ZennoPoster → новый проект → кубик **«Свой код»** → вставьте
    содержимое `register_checko.cs`.
