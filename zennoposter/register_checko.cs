@@ -26,6 +26,15 @@ string csvPath     = @"C:\Zenno\checko\accounts.csv";        // входной �
 string resultPath  = @"C:\Zenno\checko\accounts_result.csv"; // отчёт
 string regUrl      = @"https://checko.ru/";                  // страница/модалка регистрации
 
+// --- Прокси (по одному на аккаунт, по кругу) ---
+// Файл: по одной прокси в строке. Форматы:
+//   ip:port            |  login:pass@ip:port  |  http://login:pass@ip:port
+//   socks5://ip:port   |  socks5://login:pass@ip:port
+// Пустая строка "" в proxyListPath = работать без прокси.
+string proxyListPath = @"C:\Zenno\checko\proxies.txt";
+bool   proxyRequired = true;   // true: без живой прокси аккаунт пропускается; false: работаем напрямую
+int    proxyMaxTry   = 3;      // сколько прокси перебрать, если предыдущая не отвечает
+
 // --- XPath полей формы регистрации (подставьте под checko.ru) ---
 // На checko.ru обычно нужны только email и пароль — лишние поля оставьте "".
 string xpOpenSignup = "//a[contains(.,'Регистрация')] | //button[contains(.,'Регистрация')]"; // открыть форму (если модалка); "" если форма сразу на странице
@@ -121,6 +130,36 @@ Func<string,string,string,string> getConfirmLink = (imapUser, imapPass, fromFilt
     }
 };
 
+// --------------------------- Загрузка прокси ---------------------------
+var proxies = new System.Collections.Generic.List<string>();
+if (!string.IsNullOrEmpty(proxyListPath) && System.IO.File.Exists(proxyListPath))
+    foreach (var p in System.IO.File.ReadAllLines(proxyListPath))
+        if (!string.IsNullOrWhiteSpace(p) && !p.TrimStart().StartsWith("#"))
+            proxies.Add(p.Trim());
+project.SendInfoToLog("Прокси в списке: " + proxies.Count, true);
+int proxyIdx = 0;   // указатель round-robin (общий на весь прогон)
+
+// Ставит следующую по кругу рабочую прокси. Возвращает применённую строку или null.
+Func<string> applyNextProxy = () => {
+    if (proxies.Count == 0) { instance.SetProxy(""); return proxyRequired ? null : ""; }
+    for (int t = 0; t < Math.Min(proxyMaxTry, proxies.Count); t++) {
+        string prx = proxies[proxyIdx % proxies.Count];
+        proxyIdx++;
+        instance.SetProxy(prx);
+        try {
+            // проверка живости: тянем свой IP через прокси
+            string ip = instance.ActiveTab.HttpGet("https://api.ipify.org", "", "", 15000);
+            if (!string.IsNullOrEmpty(ip)) {
+                project.SendInfoToLog("Прокси OK: " + prx + " -> " + ip.Trim(), false);
+                return prx;
+            }
+        } catch (Exception ex) {
+            project.SendWarningToLog("Прокси не отвечает: " + prx + " (" + ex.Message + ")", false);
+        }
+    }
+    return null;   // ни одна из перебранных не ответила
+};
+
 // --------------------------- Чтение CSV ---------------------------
 if (!System.IO.File.Exists(csvPath)) throw new Exception("Нет файла: " + csvPath);
 var lines = System.IO.File.ReadAllLines(csvPath, System.Text.Encoding.UTF8);
@@ -150,6 +189,14 @@ for (int r = 1; r < lines.Length; r++)
     project.SendInfoToLog("=== Регистрация: " + email + " ===", true);
     try
     {
+        // назначаем прокси на этот аккаунт
+        string usedProxy = applyNextProxy();
+        if (usedProxy == null && proxyRequired) {
+            fail++; report.AppendLine(email + ";SKIP;нет живой прокси");
+            project.SendWarningToLog("Пропуск " + email + ": нет живой прокси", true);
+            continue;
+        }
+
         instance.ActiveTab.Navigate(regUrl, "");
         instance.ActiveTab.WaitDownloading();
         pause();

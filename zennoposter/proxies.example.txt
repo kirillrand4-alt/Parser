@@ -1,0 +1,10 @@
+# По одной прокси в строке. Пустые строки и строки с # игнорируются.
+# Поддерживаемые форматы:
+#   ip:port
+#   login:pass@ip:port
+#   http://login:pass@ip:port
+#   socks5://ip:port
+#   socks5://login:pass@ip:port
+192.0.2.10:8000
+login:pass@192.0.2.11:8000
+socks5://user:pwd@192.0.2.12:1080
