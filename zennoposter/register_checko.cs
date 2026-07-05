@@ -24,7 +24,7 @@
 // ------------------------------- SETTINGS ------------------------------------
 string csvPath     = @"C:\Zenno\checko\accounts.csv";        // входной файл
 string resultPath  = @"C:\Zenno\checko\accounts_result.csv"; // отчёт
-string regUrl      = @"https://checko.ru/";                  // страница/модалка регистрации
+string regUrl      = @"https://checko.ru/sign-up";           // страница регистрации
 
 // --- Прокси ---
 // Приоритет: CSV-колонка "proxy" (липкая на аккаунт) > список ниже (round-robin).
@@ -36,17 +36,17 @@ string proxyListPath = @"C:\Zenno\checko\proxies.txt";
 bool   proxyRequired = true;   // true: без живой прокси аккаунт пропускается; false: работаем напрямую
 int    proxyMaxTry   = 3;      // сколько прокси перебрать, если предыдущая не отвечает
 
-// --- XPath полей формы регистрации (подставьте под checko.ru) ---
-// На checko.ru обычно нужны только email и пароль — лишние поля оставьте "".
-string xpOpenSignup = "//a[contains(.,'Регистрация')] | //button[contains(.,'Регистрация')]"; // открыть форму (если модалка); "" если форма сразу на странице
-string xpEmail      = "//input[@type='email']";
-string xpPassword   = "//input[@type='password']";
-string xpPassword2  = "";                                    // повтор пароля, если есть
-string xpAgree      = "//input[@type='checkbox']";           // согласие с условиями; "" если нет
-string xpSubmit     = "//button[@type='submit']";            // кнопка отправки
+// --- XPath полей формы регистрации checko.ru /sign-up (по реальному HTML) ---
+string xpOpenSignup = "";                                             // форма сразу на странице
+string xpEmail      = "//input[@name='user[email]']";
+string xpPassword   = "//input[@name='user[password]']";
+string xpPassword2  = "//input[@name='user[password_confirmation]']";
+string xpAgree      = "//input[@id='personal_information']";          // чекбокс согласия
+string xpSubmit     = "//button[contains(@class,'btn-primary') and contains(.,'Зарегистрироваться')]";
 
-// Признак, что форма отправлена и письмо ушло (по желанию):
-string sentText     = "письмо";                              // подстрока на странице после отправки (нижн. регистр); "" пропустить
+// Признак, что форма отправлена (по желанию). Оставлено "" — checko после
+// отправки редиректит; факт успеха проверяем уже по письму/ссылке.
+string sentText     = "";                                    // подстрока на странице после отправки; "" пропустить
 
 // --- Способ чтения письма-подтверждения ---
 //   "imap"      — по IMAP с паролём приложения (надёжно, без входа в браузер).
@@ -54,8 +54,9 @@ string sentText     = "письмо";                              // подст
 //                 Профиль готовится один раз вручную: prepare_google_profile.cs.
 string emailReadMode      = "imap";
 
-// --- Профиль браузера (для gmail_web и/или входа через Google на checko) ---
+// --- Профиль браузера (нужен для режима gmail_web) ---
 //   Путь берётся из CSV-колонки "profile"; загружается перед работой с аккаунтом.
+//   (Вход через Google на самом checko отключён сервисом, для регистрации не нужен.)
 bool   loadProfile        = true;   // false = профиль не грузим
 // Для аккаунтов БЕЗ сохранённого профиля (обычно режим imap): генерировать
 // свежий профиль ZP на каждый аккаунт — это даёт консистентный User-Agent и
@@ -72,8 +73,9 @@ string xpGmailFirstMail   = "//tr[contains(@class,'zA')][1]"; // первая с
 string imapHost           = "imap.gmail.com";
 int    imapPort           = 993;
 string imapAppPasswordDef = "";                              // пароль приложения по умолчанию (если не задан в CSV)
-string mailFromFilter     = "checko";                        // фильтр отправителя (SEARCH FROM)
-string confirmLinkRegex   = @"https?://[^\s""'<>]*checko\.ru[^\s""'<>]*(?:confirm|activ|verif|token|key)[^\s""'<>]*";
+string mailFromFilter     = "checko";                        // отправитель no-reply@checko.ru
+// Точная ссылка активации: https://checko.ru/user/email/confirm/<uuid>
+string confirmLinkRegex   = @"https?://checko\.ru/user/email/confirm/[0-9a-fA-F-]{36}";
 int    mailWaitSeconds    = 120;                             // сколько ждать письмо
 int    mailPollSeconds    = 8;                               // интервал опроса ящика
 
