@@ -26,7 +26,8 @@ string csvPath     = @"C:\Zenno\checko\accounts.csv";        // входной �
 string resultPath  = @"C:\Zenno\checko\accounts_result.csv"; // отчёт
 string regUrl      = @"https://checko.ru/";                  // страница/модалка регистрации
 
-// --- Прокси (по одному на аккаунт, по кругу) ---
+// --- Прокси ---
+// Приоритет: CSV-колонка "proxy" (липкая на аккаунт) > список ниже (round-robin).
 // Файл: по одной прокси в строке. Форматы:
 //   ip:port            |  login:pass@ip:port  |  http://login:pass@ip:port
 //   socks5://ip:port   |  socks5://login:pass@ip:port
@@ -56,6 +57,11 @@ string emailReadMode      = "imap";
 // --- Профиль браузера (для gmail_web и/или входа через Google на checko) ---
 //   Путь берётся из CSV-колонки "profile"; загружается перед работой с аккаунтом.
 bool   loadProfile        = true;   // false = профиль не грузим
+// Для аккаунтов БЕЗ сохранённого профиля (обычно режим imap): генерировать
+// свежий профиль ZP на каждый аккаунт — это даёт консистентный User-Agent и
+// отпечаток (Canvas/WebGL/шрифты) под каждую учётку. Сохранённые Google-профили
+// не трогаются (чтобы не рвать сессию Gmail).
+bool   regenProfilePerAccount = true;
 
 // XPath для режима gmail_web (Gmail в браузере). При смене вёрстки подправьте.
 string gmailSearchUrl     = @"https://mail.google.com/mail/u/0/#search/from%3Achecko+newer_than%3A1d";
@@ -184,23 +190,33 @@ if (!string.IsNullOrEmpty(proxyListPath) && System.IO.File.Exists(proxyListPath)
 project.SendInfoToLog("Прокси в списке: " + proxies.Count, true);
 int proxyIdx = 0;   // указатель round-robin (общий на весь прогон)
 
-// Ставит следующую по кругу рабочую прокси. Возвращает применённую строку или null.
+// Проверка живости ТЕКУЩЕЙ прокси инстанса (ZP 7.7.2): навигация на ip-эхо.
+// Не зависит от перегрузок HttpGet — используем уже настроенный прокси браузера.
+Func<bool> checkProxyAlive = () => {
+    try {
+        instance.ActiveTab.Navigate("https://api.ipify.org/", "");
+        instance.ActiveTab.WaitDownloading();
+        var body = instance.ActiveTab.FindElementByTagName("body", 0);
+        string ip = body.IsVoid ? "" : body.GetAttribute("innertext").Trim();
+        bool ok = System.Text.RegularExpressions.Regex.IsMatch(ip, @"^\d{1,3}(\.\d{1,3}){3}$");
+        if (ok) project.SendInfoToLog("IP через прокси: " + ip, false);
+        return ok;
+    } catch (Exception ex) {
+        project.SendWarningToLog("Прокси-чек упал: " + ex.Message, false);
+        return false;
+    }
+};
+
+// Round-robin из списка (fallback, если аккаунту не назначена своя прокси).
+// Ставит следующую живую прокси; возвращает применённую строку или null.
 Func<string> applyNextProxy = () => {
     if (proxies.Count == 0) { instance.SetProxy(""); return proxyRequired ? null : ""; }
     for (int t = 0; t < Math.Min(proxyMaxTry, proxies.Count); t++) {
         string prx = proxies[proxyIdx % proxies.Count];
         proxyIdx++;
         instance.SetProxy(prx);
-        try {
-            // проверка живости: тянем свой IP через прокси
-            string ip = instance.ActiveTab.HttpGet("https://api.ipify.org", "", "", 15000);
-            if (!string.IsNullOrEmpty(ip)) {
-                project.SendInfoToLog("Прокси OK: " + prx + " -> " + ip.Trim(), false);
-                return prx;
-            }
-        } catch (Exception ex) {
-            project.SendWarningToLog("Прокси не отвечает: " + prx + " (" + ex.Message + ")", false);
-        }
+        if (checkProxyAlive()) { project.SendInfoToLog("Прокси OK: " + prx, false); return prx; }
+        project.SendWarningToLog("Прокси не отвечает: " + prx, false);
     }
     return null;   // ни одна из перебранных не ответила
 };
@@ -230,28 +246,47 @@ for (int r = 1; r < lines.Length; r++)
     string pass        = col(row, "password");
     string appPw       = col(row, "email_app_password");
     string profilePath = col(row, "profile");
+    string accProxy    = col(row, "proxy");   // липкая прокси, назначенная аккаунту
     if (string.IsNullOrEmpty(appPw)) appPw = imapAppPasswordDef;
 
     project.SendInfoToLog("=== Регистрация: " + email + " ===", true);
     try
     {
-        // назначаем прокси на этот аккаунт
-        string usedProxy = applyNextProxy();
-        if (usedProxy == null && proxyRequired) {
-            fail++; report.AppendLine(email + ";SKIP;нет живой прокси");
-            project.SendWarningToLog("Пропуск " + email + ": нет живой прокси", true);
-            continue;
-        }
+        bool hasProfile = loadProfile && !string.IsNullOrEmpty(profilePath) && System.IO.File.Exists(profilePath);
 
-        // загружаем заранее авторизованный профиль (сессия Gmail/Google)
-        if (loadProfile && !string.IsNullOrEmpty(profilePath)) {
-            if (System.IO.File.Exists(profilePath)) {
-                instance.LoadProfileFromFile(profilePath);
-                project.SendInfoToLog("Профиль загружен: " + profilePath, false);
-            } else if (emailReadMode == "gmail_web") {
+        // --- Профиль / отпечаток / куки ---
+        if (hasProfile) {
+            // Сохранённая сессия (Gmail/Google): грузим как есть, отпечаток и куки НЕ трогаем.
+            instance.LoadProfileFromFile(profilePath);
+            project.SendInfoToLog("Профиль загружен: " + profilePath, false);
+        } else {
+            if (!string.IsNullOrEmpty(profilePath) && emailReadMode == "gmail_web") {
+                // для gmail_web профиль обязателен
                 fail++; report.AppendLine(email + ";SKIP;нет профиля " + profilePath);
                 project.SendWarningToLog("Нет профиля для gmail_web: " + profilePath +
                     " — подготовьте prepare_google_profile.cs", true);
+                continue;
+            }
+            if (regenProfilePerAccount) instance.GenerateNewProfile();  // свежий UA + отпечаток
+            instance.ClearCookie();                                     // чистое состояние между аккаунтами
+        }
+        try { project.SendInfoToLog("UA: " + instance.Profile.UserAgent, false); } catch {}
+
+        // --- Прокси: липкая на аккаунт (колонка proxy), иначе round-robin из списка ---
+        string usedProxy;
+        if (!string.IsNullOrEmpty(accProxy)) {
+            instance.SetProxy(accProxy);
+            usedProxy = checkProxyAlive() ? accProxy : null;   // назначенную НЕ подменяем на чужой IP
+            if (usedProxy == null && proxyRequired) {
+                fail++; report.AppendLine(email + ";SKIP;назначенная прокси недоступна: " + accProxy);
+                project.SendWarningToLog("Пропуск " + email + ": прокси " + accProxy + " недоступна", true);
+                continue;
+            }
+        } else {
+            usedProxy = applyNextProxy();
+            if (usedProxy == null && proxyRequired) {
+                fail++; report.AppendLine(email + ";SKIP;нет живой прокси");
+                project.SendWarningToLog("Пропуск " + email + ": нет живой прокси", true);
                 continue;
             }
         }

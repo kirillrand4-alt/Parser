@@ -1,3 +1,3 @@
-email;password;email_app_password;profile
-myaccount@gmail.com;MyCheckoPass123!;abcdefghijklmnop;C:\Zenno\checko\profiles\account1.zpprofile
-second@gmail.com;AnotherPass456!;qrstuvwxyz123456;C:\Zenno\checko\profiles\account2.zpprofile
+email;password;email_app_password;profile;proxy
+myaccount@gmail.com;MyCheckoPass123!;abcdefghijklmnop;C:\Zenno\checko\profiles\account1.zpprofile;login:pass@192.0.2.11:8000
+second@gmail.com;AnotherPass456!;qrstuvwxyz123456;C:\Zenno\checko\profiles\account2.zpprofile;socks5://user:pwd@192.0.2.12:1080
