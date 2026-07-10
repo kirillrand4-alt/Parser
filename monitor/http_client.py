@@ -122,6 +122,10 @@ class HttpClient:
         self._proxy_refresh = (os.getenv(f"PROXY_REFRESH__{key}")
                                or os.getenv("PROXY_REFRESH") or "")
         self._using_proxy = False
+        # Set when the proxy endpoint itself refuses/loses connections; blocks
+        # re-enabling a known-dead proxy (e.g. the 500s-switch in pnevmo_sklad).
+        self._proxy_dead = False
+        self._proxy_fail_count = 0
         import logging as _l
         _log = _l.getLogger(__name__)
         if self._proxy_url:
@@ -144,7 +148,7 @@ class HttpClient:
         self._session.headers["User-Agent"] = random.choice(USER_AGENTS)
 
     def _enable_proxy(self) -> None:
-        if not self._proxy_url or self._using_proxy:
+        if not self._proxy_url or self._using_proxy or self._proxy_dead:
             return
         if self._proxy_refresh:
             try:
@@ -156,6 +160,29 @@ class HttpClient:
         self._using_proxy = True
         import logging as _l
         _l.getLogger(__name__).info("[%s] switched to PROXY", self.site_name)
+
+    def _disable_proxy(self) -> None:
+        """Drop a dead proxy and continue DIRECT (endpoint refused/unreachable)."""
+        self._session.proxies.clear()
+        self._using_proxy = False
+        self._proxy_dead = True
+        import logging as _l
+        _l.getLogger(__name__).warning(
+            "[%s] proxy endpoint unreachable — falling back to DIRECT connection "
+            "(update the proxy in settings; set PROXY_FALLBACK_DIRECT=0 to forbid "
+            "direct fallback)", self.site_name)
+
+    @staticmethod
+    def _is_proxy_conn_error(exc: Exception) -> bool:
+        """True when the failure is connecting to the proxy itself, not the site.
+
+        requests raises ProxyError for HTTP proxies; for SOCKS the chain surfaces
+        as a ConnectionError whose text carries the SOCKS connection class.
+        """
+        if isinstance(exc, requests.exceptions.ProxyError):
+            return True
+        text = str(exc).lower()
+        return "socks" in text or "proxy" in text
 
     def _raw_get(self, url, params, headers, timeout, force_refresh, **kwargs):
         if force_refresh:
@@ -196,8 +223,21 @@ class HttpClient:
             headers = {**ref_headers, **(headers or {})}
         last_exc: requests.HTTPError | None = None
         for attempt in range(self._retry_attempts):
-            resp = self._raw_get(url, params, headers, timeout,
-                                  force_refresh or attempt > 0, **kwargs)
+            try:
+                resp = self._raw_get(url, params, headers, timeout,
+                                     force_refresh or attempt > 0, **kwargs)
+            except requests.ConnectionError as exc:
+                # A dead proxy endpoint would otherwise fail every request of
+                # the whole run. After 2 proxy-connect failures switch this
+                # client to direct access (opt out: PROXY_FALLBACK_DIRECT=0).
+                if (self._using_proxy and self._is_proxy_conn_error(exc)
+                        and os.getenv("PROXY_FALLBACK_DIRECT", "1") != "0"):
+                    self._proxy_fail_count += 1
+                    if self._proxy_fail_count >= 2:
+                        self._disable_proxy()
+                        continue  # retry this attempt without the proxy
+                raise
+            self._proxy_fail_count = 0
             try:
                 resp.raise_for_status()
                 return resp
