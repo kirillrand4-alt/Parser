@@ -30,6 +30,11 @@ YML_URL = "https://compressortyt.ru/yml/"
 # Enrich each product with full specs from its HTML page.
 # Costs ~17k extra requests; off by default. Enable via COMPRESSORTYT_ENRICH=1.
 ENRICH_SPECS = os.getenv("COMPRESSORTYT_ENRICH", "0") == "1"
+# Parse HTML category pages instead of the YML feed. Slower (walks every
+# category with pagination + fetches each product page) but reflects exactly
+# what the site shows — use when the feed is stale/incomplete for some brand.
+# Enable via COMPRESSORTYT_HTML=1.
+USE_HTML = os.getenv("COMPRESSORTYT_HTML", "0") == "1"
 # Cap offers parsed from the feed (0 = all). Useful for test runs.
 MAX_OFFERS = int(os.getenv("COMPRESSORTYT_MAX", "0")) or None
 
@@ -65,7 +70,18 @@ class CompressortytScraper(BaseScraper):
     # ------------------------------------------------------------------
 
     def scrape(self, position: int = 0):  # type: ignore[override]
-        """Parse the YML feed; optionally enrich each product with HTML specs."""
+        """Parse the YML feed; optionally enrich each product with HTML specs.
+
+        With COMPRESSORTYT_HTML=1 the feed is skipped entirely and products are
+        collected by walking the HTML category pages (discover/fetch_listing/
+        parse_product in the base class).
+        """
+        if USE_HTML:
+            logger.info("[compressortyt] COMPRESSORTYT_HTML=1 — parsing category "
+                        "pages instead of the YML feed")
+            yield from super().scrape(position=position)
+            return
+
         try:
             from tqdm.auto import tqdm
         except Exception:
