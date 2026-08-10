@@ -29,11 +29,22 @@ def normalize_proxy(raw: str) -> str:
     FIRST request of every site — and InvalidURL is not a ConnectionError, so the
     retry loop in get() never sees it and the whole run dies at 0%.
 
-    Accepted inputs (scheme optional, defaults to http):
+    Accepted inputs (scheme optional):
       socks5://host:port:user:pass   → socks5://user:pass@host:port
-      host:port:user:pass            → http://user:pass@host:port
+      host:port:user:pass            → socks5h://user:pass@host:port
       socks5h://user:pass@host:port  → unchanged (already valid)
-      host:port                      → http://host:port
+      host:port                      → socks5h://host:port
+
+    A scheme-less entry is assumed to be **socks5h**, not http. Proxy pools are
+    handed over as bare `user:pass@host:port` / `host:port:user:pass` lines and
+    are SOCKS5 in practice; treating them as HTTP proxies makes requests send a
+    plain HTTP request into a SOCKS port and the socks handshake comes back as
+    `BadStatusLine('\\x00[\\x00...')` on EVERY request — a whole run at 0% with
+    an error that names neither the proxy nor the scheme. `socks5h` (not
+    `socks5`) so DNS is resolved by the proxy, which is the point of using a
+    residential exit against a site that blocks datacenter IPs. Override the
+    assumption with PROXY_SCHEME=http; an explicit scheme in the string always
+    wins.
     Returns "" when the result still does not parse — the caller then stays on a
     direct connection instead of crashing mid-run.
     """
@@ -44,7 +55,7 @@ def normalize_proxy(raw: str) -> str:
         return ""
     scheme, sep, rest = raw.partition("://")
     if not sep:
-        scheme, rest = "http", raw
+        scheme, rest = os.getenv("PROXY_SCHEME", "socks5h").strip() or "socks5h", raw
     # Seller form is detected by shape, not by the absence of '@': a password
     # may itself contain '@' (host:1080:user:p@ss). Three colons + a numeric
     # second field can only be host:port:user:pass — `user:pass@host:port` has
