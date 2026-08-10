@@ -27,9 +27,14 @@ logger = logging.getLogger(__name__)
 BASE = "https://compressortyt.ru"
 YML_URL = "https://compressortyt.ru/yml/"
 
-# Enrich each product with full specs from its HTML page.
-# Costs ~17k extra requests; off by default. Enable via COMPRESSORTYT_ENRICH=1.
-ENRICH_SPECS = os.getenv("COMPRESSORTYT_ENRICH", "0") == "1"
+# Enrich each product with full specs from its HTML page. The YML feed carries
+# price/brand/name but NO specs, so without enrichment every compressortyt card
+# has an empty `specs` — useless to the matcher (kW/bar/flow all missing). The
+# product page DOES expose a full spec table (verified: 21 fields incl. power,
+# pressure, flow, drive, VFD, dryer, cooling). So enrichment is ON by default;
+# it costs ~16k extra page fetches, which is the same per-product cost the other
+# five sites already pay (they have no feed). Opt out with COMPRESSORTYT_ENRICH=0.
+ENRICH_SPECS = os.getenv("COMPRESSORTYT_ENRICH", "1") != "0"
 # Parse HTML category pages instead of the YML feed. Slower (walks every
 # category with pagination + fetches each product page) but reflects exactly
 # what the site shows — use when the feed is stale/incomplete for some brand.
@@ -38,19 +43,13 @@ USE_HTML = os.getenv("COMPRESSORTYT_HTML", "0") == "1"
 # Cap offers parsed from the feed (0 = all). Useful for test runs.
 MAX_OFFERS = int(os.getenv("COMPRESSORTYT_MAX", "0")) or None
 
-# Leaf category slugs to crawl (avoids the huge root /stanciya/kompr/ page)
-CATEGORIES = [
-    "/stanciya/kompr/vintovye/",
-    "/stanciya/kompr/porshnevye/",
-    "/stanciya/kompr/spiralnye/",
-    "/stanciya/kompr/bezmaslyany/",
-    "/stanciya/kompr/bezmaloye/",          # low-oil
-    "/stanciya/kompr/s-remennoy-peredachey/",
-    "/stanciya/kompr/s-pryamym-privodom/",
-    "/stanciya/kompr/dvukhstupenchatye/",
-    "/stanciya/kompr/mobilnye/",
-    "/stanciya/kompr/dizelnyy/",
-]
+# HTML-mode entry point. Earlier this was a list of leaf slugs, but 6 of the 10
+# 404'd (bezmaslyany, bezmaloye, s-remennoy-peredachey, dvukhstupenchatye,
+# mobilnye, dizelnyy) and the pagination used `?page=N` which the site answers
+# with 404 — HTML mode collected 631 URLs instead of ~15.9k. The root compressor
+# category paginates over EVERY compressor (site counter: "Найдено 15908"), so
+# walking it with the real `/page-N/` scheme is both complete and self-maintaining.
+CATEGORIES = ["/stanciya/kompr/"]
 
 _IMG_PLACEHOLDER = "ll.png"
 
@@ -215,11 +214,24 @@ class CompressortytScraper(BaseScraper):
             product.series_status = status
 
     def fetch_listing(self, url: str) -> list[str]:
-        """Collect all product URLs from a category, following pagination."""
+        """Collect all product URLs from a category, following pagination.
+
+        Two site facts learned the hard way:
+          * pagination is `/page-N/` appended to the category path, NOT `?page=N`
+            (the query form 404s);
+          * a product tile is `a.product__title-link` / `a.js-product-link` whose
+            href has 5 path segments (`/stanciya/kompr/<type>/<brand>/<model>/`);
+            brand and category tiles share the `/stanciya/kompr/` prefix but have
+            only 3-4 segments, so a plain prefix match pulls in non-products.
+        The listing tile also carries data-product-price/name/brand, but we only
+        need the URL here — the feed/enrich path fills the rest.
+        """
+        base = url.rstrip("/")
         product_urls: list[str] = []
         page = 1
-        while True:
-            paged_url = url if page == 1 else f"{url}?page={page}"
+        empty_streak = 0
+        while page <= 800:  # hard stop; catalog is ~530 pages
+            paged_url = f"{base}/" if page == 1 else f"{base}/page-{page}/"
             try:
                 resp = self.client.get(paged_url)
             except Exception as exc:
@@ -227,30 +239,29 @@ class CompressortytScraper(BaseScraper):
                 break
 
             soup = BeautifulSoup(resp.content, "lxml")
-            cards = soup.select("div.catalog-item, article.product-card, div.product-item")
-            if not cards:
-                # fallback: any link matching product URL pattern
-                cards = soup.select("a[href*='/stanciya/kompr/']")
+            links = soup.select("a.product__title-link, a.js-product-link")
+            if not links:  # template drift — fall back to any kompr link, filtered below
+                links = soup.select("a[href*='/stanciya/kompr/']")
 
             found_on_page = 0
-            for card in cards:
-                link = card if card.name == "a" else card.select_one("a[href*='/stanciya/kompr/']")
-                if not link:
+            for link in links:
+                href = (link.get("href") or "").split("?")[0]
+                if "/stanciya/kompr/" not in href:
                     continue
-                href = link.get("href", "")
-                # Only leaf product URLs (4+ path segments)
-                parts = [p for p in href.split("/") if p]
-                if len(parts) >= 4:
+                # 5 segments = real product; fewer = brand/category/filter page
+                parts = [p for p in href.split("://")[-1].split("/")[1:] if p]
+                if len(parts) >= 5:
                     full = href if href.startswith("http") else BASE + href
                     product_urls.append(full)
                     found_on_page += 1
 
-            logger.debug("[compressortyt] page %d of %s → %d products", page, url, found_on_page)
-
-            # Check for next page
-            next_link = soup.select_one("a.next, a[rel='next'], .pagination a:last-child")
-            if not next_link or found_on_page == 0:
-                break
+            logger.debug("[compressortyt] %s → %d products", paged_url, found_on_page)
+            if found_on_page == 0:
+                empty_streak += 1
+                if empty_streak >= 2:  # tolerate one odd page, stop on two
+                    break
+            else:
+                empty_streak = 0
             page += 1
 
         return list(dict.fromkeys(product_urls))  # deduplicate preserving order

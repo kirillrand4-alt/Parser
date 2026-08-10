@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import random
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -70,6 +71,37 @@ def normalize_proxy(raw: str) -> str:
             "scheme://user:pass@host:port or host:port:user:pass", raw, exc)
         return ""
     return url
+
+
+def normalize_proxy_pool(raw: str) -> list[str]:
+    """Parse one-or-many proxies into a list of usable proxy URLs.
+
+    A single site can front a large catalog (pnevmo-sklad has 21k+ product URLs)
+    behind a WAF that blocks datacenter IPs; one static exit gets rate-limited or
+    re-blocked partway through. So PROXY / PROXY__<SITE> may hold a WHOLE pool —
+    newline-, comma- or semicolon-separated, or a path to a file with one proxy
+    per line (the dolphin pool ships as such a file). Each entry goes through
+    normalize_proxy(); unusable ones are dropped with a log line, order and
+    de-duplication preserved. A single proxy just yields a one-element list, so
+    the caller path is identical for one or many.
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return []
+    # A bare existing path → read it as a proxy-per-line file.
+    if "\n" not in raw and os.path.sep in raw and os.path.exists(raw):
+        try:
+            raw = open(raw, encoding="utf-8").read()
+        except OSError:
+            pass
+    parts = re.split(r"[\n,;]+", raw)
+    pool, seen = [], set()
+    for p in parts:
+        n = normalize_proxy(p)
+        if n and n not in seen:
+            seen.add(n)
+            pool.append(n)
+    return pool
 
 DEFAULT_HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,"
@@ -171,8 +203,14 @@ class HttpClient:
         # If proxy is configured it is enabled immediately (every request goes
         # through it). Without proxy, direct access is used throughout.
         key = site_name.replace(".", "_").replace("-", "_").upper()
-        self._proxy_url = normalize_proxy(
+        self._proxy_pool = normalize_proxy_pool(
             os.getenv(f"PROXY__{key}") or os.getenv("PROXY") or "")
+        # first entry drives the legacy single-proxy fields (logging + the
+        # webui live-checker, which assigns _proxy_url directly)
+        self._proxy_url = self._proxy_pool[0] if self._proxy_pool else ""
+        # proxies proven dead this run — skipped by _pick_proxy until the pool
+        # empties, at which point we fall back to DIRECT
+        self._proxy_dead_set: set[str] = set()
         self._proxy_refresh = (os.getenv(f"PROXY_REFRESH__{key}")
                                or os.getenv("PROXY_REFRESH") or "")
         self._using_proxy = False
@@ -202,10 +240,12 @@ class HttpClient:
         self._session.headers["User-Agent"] = random.choice(USER_AGENTS)
 
     def _enable_proxy(self) -> None:
-        # Re-normalize: webui's live price checker assigns _proxy_url directly
-        # from the settings file, bypassing __init__.
-        self._proxy_url = normalize_proxy(self._proxy_url)
-        if not self._proxy_url or self._using_proxy or self._proxy_dead:
+        # webui's live price checker assigns _proxy_url directly (bypassing
+        # __init__), so rebuild the pool from it when empty.
+        if not self._proxy_pool and self._proxy_url:
+            self._proxy_pool = normalize_proxy_pool(self._proxy_url)
+            self._proxy_url = self._proxy_pool[0] if self._proxy_pool else ""
+        if not self._proxy_pool or self._using_proxy or self._proxy_dead:
             return
         if self._proxy_refresh:
             try:
@@ -213,10 +253,25 @@ class HttpClient:
                 time.sleep(3)  # let provider rotate the exit IP
             except Exception:
                 pass
-        self._session.proxies.update({"http": self._proxy_url, "https": self._proxy_url})
+        # Proxies are applied PER REQUEST (see _pick_proxy), not on the shared
+        # session: WORKERS>1 threads share one session, and mutating
+        # session.proxies mid-flight would let one thread's request go out
+        # through another thread's proxy.
         self._using_proxy = True
         import logging as _l
-        _l.getLogger(__name__).info("[%s] switched to PROXY", self.site_name)
+        _l.getLogger(__name__).info(
+            "[%s] switched to PROXY (%d in pool)", self.site_name,
+            len(self._proxy_pool))
+
+    def _pick_proxy(self) -> str | None:
+        """A live proxy from the pool for this one request (random = balanced
+        across threads, no shared cursor to race on)."""
+        if not self._using_proxy or not self._proxy_pool:
+            return None
+        live = [p for p in self._proxy_pool if p not in self._proxy_dead_set]
+        if not live:
+            return None
+        return random.choice(live)
 
     def _disable_proxy(self) -> None:
         """Drop a dead proxy and continue DIRECT (endpoint refused/unreachable)."""
@@ -282,25 +337,51 @@ class HttpClient:
             ref_headers = {"Referer": f"{parts.scheme}://{parts.netloc}/",
                            "Sec-Fetch-Site": "same-origin"}
             headers = {**ref_headers, **(headers or {})}
-        last_exc: requests.HTTPError | None = None
-        for attempt in range(self._retry_attempts):
+        last_exc: BaseException | None = None
+        attempt = 0
+        # Rotating past dead pool proxies / dropping to direct must NOT consume
+        # the site-retry budget — otherwise a pool bigger than retry_attempts
+        # exhausts the loop before any live exit is tried. Those iterations get
+        # their own bound (pool size + 1), and only genuine site-level retries
+        # increment `attempt`.
+        switch_budget = len(self._proxy_pool) + 1
+        while attempt < self._retry_attempts:
+            proxy = self._pick_proxy()
+            call_kwargs = kwargs
+            if proxy is not None:
+                call_kwargs = {**kwargs, "proxies": {"http": proxy, "https": proxy}}
             try:
                 resp = self._raw_get(url, params, headers, timeout,
-                                     force_refresh or attempt > 0, **kwargs)
+                                     force_refresh or attempt > 0, **call_kwargs)
             except (requests.ConnectionError,
                     requests.exceptions.InvalidURL) as exc:
+                last_exc = exc
                 # A dead proxy endpoint would otherwise fail every request of
-                # the whole run. After 2 proxy-connect failures switch this
-                # client to direct access (opt out: PROXY_FALLBACK_DIRECT=0).
+                # the whole run. Handling depends on pool size.
                 if (self._using_proxy and self._is_proxy_conn_error(exc)
-                        and os.getenv("PROXY_FALLBACK_DIRECT", "1") != "0"):
+                        and os.getenv("PROXY_FALLBACK_DIRECT", "1") != "0"
+                        and switch_budget > 0):
                     self._proxy_fail_count += 1
-                    # A malformed proxy URL can never succeed — no point burning
-                    # a second attempt on it, unlike a flaky endpoint.
+                    live = [p for p in self._proxy_pool
+                            if p not in self._proxy_dead_set]
+                    # With a pool, evict just THIS proxy and retry through
+                    # another — one dead exit must not sink the whole run.
+                    if proxy is not None and len(live) > 1:
+                        self._proxy_dead_set.add(proxy)
+                        switch_budget -= 1
+                        import logging as _l
+                        _l.getLogger(__name__).warning(
+                            "[%s] proxy %s dead — %d left in pool",
+                            self.site_name, proxy.split("@")[-1], len(live) - 1)
+                        continue
+                    # Single proxy (or last one standing): a malformed URL can
+                    # never work, so bail immediately; a flaky endpoint gets one
+                    # more attempt before we drop to DIRECT.
                     if (self._proxy_fail_count >= 2
                             or isinstance(exc, requests.exceptions.InvalidURL)):
                         self._disable_proxy()
-                        continue  # retry this attempt without the proxy
+                        switch_budget -= 1
+                        continue  # retry this same attempt, now DIRECT
                 raise
             self._proxy_fail_count = 0
             try:
@@ -314,7 +395,13 @@ class HttpClient:
                 last_exc = exc
                 self._rotate_ua()
                 time.sleep(2 * (attempt + 1))
-        raise last_exc  # type: ignore[misc]
+            attempt += 1
+        # Loop exhausted. last_exc is always set here (the loop only ends via an
+        # HTTP error that used up the budget, or a proxy path that fell through),
+        # but guard against raising None just in case.
+        if last_exc is not None:
+            raise last_exc
+        raise requests.ConnectionError(f"{url}: request failed after retries")
 
     def close(self) -> None:
         self._session.close()
