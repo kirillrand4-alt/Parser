@@ -99,8 +99,11 @@ def normalize_proxy_pool(raw: str) -> list[str]:
     raw = (raw or "").strip()
     if not raw:
         return []
-    # A bare existing path → read it as a proxy-per-line file.
-    if "\n" not in raw and os.path.sep in raw and os.path.exists(raw):
+    # A bare existing path → read it as a proxy-per-line file. Test existence
+    # directly instead of sniffing for os.path.sep: on Windows the separator is
+    # "\", so a perfectly good "C:/parser/proxies.txt" would not be recognised.
+    # A real proxy string never names an existing file.
+    if "\n" not in raw and os.path.exists(raw):
         try:
             raw = open(raw, encoding="utf-8").read()
         except OSError:
