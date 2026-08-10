@@ -187,13 +187,28 @@ class CompressortytScraper(BaseScraper):
         if os.getenv("COMPRESSORTYT_UNION", "1") == "0":
             return
         feed_urls = {offer_url(o) for o in offers}
-        try:
-            listed: list[str] = []
-            for cat in CATEGORIES:
-                listed += self.fetch_listing(BASE + cat)
-        except Exception as exc:
-            logger.warning("[compressortyt] catalog walk failed: %s", exc)
-            return
+        # Обход каталога стоит дорого: ~600 страниц, и в боевом прогоне это
+        # ЧАСЫ, а не минуты — замер 10.08 на v-p-k дал 26 с/страница (крупные
+        # страницы + прокси + шесть сайтов параллельно делят канал). Платить
+        # это каждый прогон нельзя, поэтому список URL кешируется в чекпоинте
+        # ровно так же, как base_scraper кеширует product_urls: при RESUME=1
+        # берём готовый, при «с нуля» — обходим заново.
+        listed: list[str] = self._checkpoint.get("catalog_urls", []) if resume else []
+        if listed:
+            logger.info("[compressortyt] каталог: %d URL из чекпоинта "
+                        "(обход пропущен)", len(listed))
+        else:
+            try:
+                listed = []
+                for cat in CATEGORIES:
+                    listed += self.fetch_listing(BASE + cat)
+            except Exception as exc:
+                logger.warning("[compressortyt] catalog walk failed: %s", exc)
+                return
+            self._checkpoint["catalog_urls"] = listed
+            self._save_progress(done_urls, failed_urls)
+            logger.info("[compressortyt] каталог обойдён: %d URL, сохранено в "
+                        "чекпоинт", len(listed))
         extra = [u for u in dict.fromkeys(listed)
                  if u not in feed_urls and u not in done_urls
                  and u not in seed_done]
