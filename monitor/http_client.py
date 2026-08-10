@@ -18,6 +18,59 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 CACHE_DIR = Path(os.getenv("HTTP_CACHE_DIR", "cache"))
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
+
+def normalize_proxy(raw: str) -> str:
+    """Bring a proxy string to the `scheme://user:pass@host:port` form requests needs.
+
+    Proxy sellers hand out credentials as `host:port:user:pass`, and that is what
+    gets pasted into the settings field. Feeding it to requests raises
+    `InvalidURL: Failed to parse: socks5://bproxy.site:10917:DyC8yN:re...` on the
+    FIRST request of every site — and InvalidURL is not a ConnectionError, so the
+    retry loop in get() never sees it and the whole run dies at 0%.
+
+    Accepted inputs (scheme optional, defaults to http):
+      socks5://host:port:user:pass   → socks5://user:pass@host:port
+      host:port:user:pass            → http://user:pass@host:port
+      socks5h://user:pass@host:port  → unchanged (already valid)
+      host:port                      → http://host:port
+    Returns "" when the result still does not parse — the caller then stays on a
+    direct connection instead of crashing mid-run.
+    """
+    from urllib.parse import quote, urlsplit
+
+    raw = (raw or "").strip()
+    if not raw:
+        return ""
+    scheme, sep, rest = raw.partition("://")
+    if not sep:
+        scheme, rest = "http", raw
+    # Seller form is detected by shape, not by the absence of '@': a password
+    # may itself contain '@' (host:1080:user:p@ss). Three colons + a numeric
+    # second field can only be host:port:user:pass — `user:pass@host:port` has
+    # two colons, so it never reaches four parts.
+    parts = rest.split(":")
+    if len(parts) == 4 and parts[1].isdigit():    # host:port:user:pass
+        host, port, user, pw = parts
+        rest = f"{user}:{pw}@{host}:{port}"
+    if "@" in rest:
+        creds, _, hostport = rest.rpartition("@")
+        user, _, pw = creds.partition(":")
+        # safe="%" keeps already-encoded creds intact instead of double-encoding
+        # them; '@' or ':' inside a password would otherwise break the split.
+        rest = f"{quote(user, safe='%')}:{quote(pw, safe='%')}@{hostport}"
+    url = f"{scheme}://{rest}"
+    try:
+        parts_ = urlsplit(url)
+        if not parts_.hostname or parts_.port is None:
+            raise ValueError("host or port missing")
+    except ValueError as exc:
+        import logging as _l
+        _l.getLogger(__name__).error(
+            "proxy string %r is not usable (%s) — continuing DIRECT. Expected "
+            "scheme://user:pass@host:port or host:port:user:pass", raw, exc)
+        return ""
+    return url
+
 DEFAULT_HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,"
               "image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
@@ -118,7 +171,8 @@ class HttpClient:
         # If proxy is configured it is enabled immediately (every request goes
         # through it). Without proxy, direct access is used throughout.
         key = site_name.replace(".", "_").replace("-", "_").upper()
-        self._proxy_url = os.getenv(f"PROXY__{key}") or os.getenv("PROXY") or ""
+        self._proxy_url = normalize_proxy(
+            os.getenv(f"PROXY__{key}") or os.getenv("PROXY") or "")
         self._proxy_refresh = (os.getenv(f"PROXY_REFRESH__{key}")
                                or os.getenv("PROXY_REFRESH") or "")
         self._using_proxy = False
@@ -148,6 +202,9 @@ class HttpClient:
         self._session.headers["User-Agent"] = random.choice(USER_AGENTS)
 
     def _enable_proxy(self) -> None:
+        # Re-normalize: webui's live price checker assigns _proxy_url directly
+        # from the settings file, bypassing __init__.
+        self._proxy_url = normalize_proxy(self._proxy_url)
         if not self._proxy_url or self._using_proxy or self._proxy_dead:
             return
         if self._proxy_refresh:
@@ -179,7 +236,11 @@ class HttpClient:
         requests raises ProxyError for HTTP proxies; for SOCKS the chain surfaces
         as a ConnectionError whose text carries the SOCKS connection class.
         """
-        if isinstance(exc, requests.exceptions.ProxyError):
+        # InvalidURL = the proxy string itself is malformed. It is raised while
+        # building the connection, so treat it as a proxy failure and fall back
+        # to direct instead of killing the run.
+        if isinstance(exc, (requests.exceptions.ProxyError,
+                            requests.exceptions.InvalidURL)):
             return True
         text = str(exc).lower()
         return "socks" in text or "proxy" in text
@@ -226,14 +287,18 @@ class HttpClient:
             try:
                 resp = self._raw_get(url, params, headers, timeout,
                                      force_refresh or attempt > 0, **kwargs)
-            except requests.ConnectionError as exc:
+            except (requests.ConnectionError,
+                    requests.exceptions.InvalidURL) as exc:
                 # A dead proxy endpoint would otherwise fail every request of
                 # the whole run. After 2 proxy-connect failures switch this
                 # client to direct access (opt out: PROXY_FALLBACK_DIRECT=0).
                 if (self._using_proxy and self._is_proxy_conn_error(exc)
                         and os.getenv("PROXY_FALLBACK_DIRECT", "1") != "0"):
                     self._proxy_fail_count += 1
-                    if self._proxy_fail_count >= 2:
+                    # A malformed proxy URL can never succeed — no point burning
+                    # a second attempt on it, unlike a flaky endpoint.
+                    if (self._proxy_fail_count >= 2
+                            or isinstance(exc, requests.exceptions.InvalidURL)):
                         self._disable_proxy()
                         continue  # retry this attempt without the proxy
                 raise

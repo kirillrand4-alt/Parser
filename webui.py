@@ -1258,6 +1258,7 @@ def settings():
                    "workers": "WORKERS"}
 
     if request.method == "POST":
+        from monitor.http_client import normalize_proxy
         data = request.get_json() or {}
         site = (data.get("site") or "").strip()
         use_global = (not site or site == "all")
@@ -1265,6 +1266,10 @@ def settings():
         for field, prefix in _FIELD_ENV.items():
             env_name = _GLOBAL_ENV[field] if use_global else f"{prefix}{key}"
             v = str(data.get(field, "")).strip()
+            # Sellers give proxies as host:port:user:pass; store the canonical
+            # scheme://user:pass@host:port so the saved value is usable as-is.
+            if v and field == "proxy":
+                v = normalize_proxy(v) or v
             if v:
                 _runtime_env[env_name] = v
             else:
