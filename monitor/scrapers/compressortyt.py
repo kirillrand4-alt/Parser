@@ -287,24 +287,18 @@ class CompressortytScraper(BaseScraper):
         The listing tile also carries data-product-price/name/brand, but we only
         need the URL here — the feed/enrich path fills the rest.
         """
-        base = url.rstrip("/")
-        product_urls: list[str] = []
-        page = 1
-        empty_streak = 0
-        while page <= 800:  # hard stop; catalog is ~530 pages
-            paged_url = f"{base}/" if page == 1 else f"{base}/page-{page}/"
-            try:
-                resp = self.client.get(paged_url)
-            except Exception as exc:
-                logger.warning("[compressortyt] listing page error %s: %s", paged_url, exc)
-                break
+        from concurrent.futures import ThreadPoolExecutor
+        from urllib.parse import urlsplit
 
-            soup = BeautifulSoup(resp.content, "lxml")
+        base = url.rstrip("/")
+        path = urlsplit(base).path.rstrip("/")
+
+        def products_on(html: bytes) -> list[str]:
+            soup = BeautifulSoup(html, "lxml")
             links = soup.select("a.product__title-link, a.js-product-link")
             if not links:  # template drift — fall back to any kompr link, filtered below
                 links = soup.select("a[href*='/stanciya/kompr/']")
-
-            found_on_page = 0
+            out = []
             for link in links:
                 href = (link.get("href") or "").split("?")[0]
                 if "/stanciya/kompr/" not in href:
@@ -312,24 +306,68 @@ class CompressortytScraper(BaseScraper):
                 # 5 segments = real product; fewer = brand/category/filter page
                 parts = [p for p in href.split("://")[-1].split("/")[1:] if p]
                 if len(parts) >= 5:
-                    full = href if href.startswith("http") else BASE + href
-                    product_urls.append(full)
-                    found_on_page += 1
+                    out.append(href if href.startswith("http") else BASE + href)
+            return out
 
-            logger.debug("[compressortyt] %s → %d products", paged_url, found_on_page)
-            # Обход каталога — это ~600 страниц, минут пятнадцать через прокси, и
-            # всё это время сайт не показывает ни одного товара. Без отметки
-            # прогресса это выглядит как зависший парсер (ровно так и выглядело).
-            if page % 50 == 0:
-                logger.info("[compressortyt] обход каталога: страница %d, "
-                            "%d товаров найдено", page, len(product_urls))
-            if found_on_page == 0:
-                empty_streak += 1
-                if empty_streak >= 2:  # tolerate one odd page, stop on two
+        # Страница 1 нужна в любом случае — и ради товаров, и ради числа страниц.
+        try:
+            first = self.client.get(f"{base}/").content
+        except Exception as exc:
+            logger.warning("[compressortyt] listing page error %s/: %s", base, exc)
+            return []
+        product_urls: list[str] = products_on(first)
+
+        # Сайт печатает ссылку на ПОСЛЕДНЮЮ страницу прямо на первой
+        # (/stanciya/kompr/page-594/), поэтому перебирать вслепую до 404 не надо:
+        # берём число и качаем страницы пачками параллельно. Паттерн привязан к
+        # пути категории — иначе в него попадает пагинация отзывов
+        # (/o-kompanii/reviews/page-27/) и число страниц выходит чужое.
+        pages = [int(n) for n in re.findall(
+            re.escape(path) + r"/page-(\d+)/", first.decode("utf-8", "replace"))]
+        last = max(pages) if pages else 0
+
+        if last > 1:
+            # 594 страницы по одной — это часы (замер: 26 с/страница через прокси
+            # при шести сайтах параллельно). Пул запросов идёт через РАЗНЫЕ прокси
+            # из пула, поэтому нагрузка на сайт размазана по адресам.
+            workers = int(os.getenv("COMPRESSORTYT_LISTING_WORKERS", "16"))
+            logger.info("[compressortyt] каталог %s: %d страниц, качаю по %d",
+                        path, last, workers)
+            done = 0
+
+            def grab(p: int) -> tuple[int, list[str]]:
+                try:
+                    return p, products_on(self.client.get(f"{base}/page-{p}/").content)
+                except Exception as exc:
+                    logger.warning("[compressortyt] страница %d: %s", p, exc)
+                    return p, []
+
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                # pool.map отдаёт результаты в порядке аргументов, то есть список
+                # URL не «плавает» между прогонами. Оборачивать в sorted() нельзя:
+                # он дожидается ВСЕХ страниц, и отметки прогресса не печатаются
+                # до самого конца обхода — ровно то, от чего мы уходим.
+                for p, found in pool.map(grab, range(2, last + 1)):
+                    product_urls += found
+                    done += 1
+                    if done % 50 == 0:
+                        logger.info("[compressortyt] обход: %d/%d страниц, "
+                                    "%d товаров", done, last - 1, len(product_urls))
+        else:
+            # Разметка пагинации поменялась — идём по одной, пока не кончится.
+            logger.info("[compressortyt] число страниц не найдено — обход по одной")
+            page, empty_streak = 2, 0
+            while page <= 800:
+                try:
+                    found = products_on(self.client.get(f"{base}/page-{page}/").content)
+                except Exception as exc:
+                    logger.warning("[compressortyt] страница %d: %s", page, exc)
                     break
-            else:
-                empty_streak = 0
-            page += 1
+                product_urls += found
+                empty_streak = empty_streak + 1 if not found else 0
+                if empty_streak >= 2:  # одну странную страницу терпим, на второй встаём
+                    break
+                page += 1
 
         return list(dict.fromkeys(product_urls))  # deduplicate preserving order
 
