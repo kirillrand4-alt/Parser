@@ -84,8 +84,7 @@ class CompressortytScraper(BaseScraper):
         try:
             from tqdm.auto import tqdm
         except Exception:
-            def tqdm(iterable=None, **_):
-                return iterable if iterable is not None else iter(())
+            from ..base_scraper import tqdm  # no-op bar stub (same contract)
 
         resp = self.client.get(YML_URL, timeout=60)
         root = ET.fromstring(resp.content)
@@ -175,6 +174,53 @@ class CompressortytScraper(BaseScraper):
                 yield product
         finally:
             bar.close()
+            self._save_progress(done_urls, failed_urls)
+
+        # The feed is NOT the whole catalog: measured 2026-08-10, the compressor
+        # section lists 17 678 products while the feed carries only 11 255 of
+        # them — 6 510 missing, overwhelmingly screw compressors (Kaeser DSD/DSG,
+        # Kraftmann TAURUS/VEGA, ЗИФ СВЭ, Atmos ST). They are missing because the
+        # feed mostly carries priced offers, and those cards are "по запросу" —
+        # exactly the ones GAP analysis needs. So after the feed, walk the
+        # catalog and pick up whatever it did not contain (opt out with
+        # COMPRESSORTYT_UNION=0).
+        if os.getenv("COMPRESSORTYT_UNION", "1") == "0":
+            return
+        feed_urls = {offer_url(o) for o in offers}
+        try:
+            listed: list[str] = []
+            for cat in CATEGORIES:
+                listed += self.fetch_listing(BASE + cat)
+        except Exception as exc:
+            logger.warning("[compressortyt] catalog walk failed: %s", exc)
+            return
+        extra = [u for u in dict.fromkeys(listed)
+                 if u not in feed_urls and u not in done_urls
+                 and u not in seed_done]
+        if not extra:
+            return
+        logger.info("[compressortyt] catalog walk: %d products the feed lacks",
+                    len(extra))
+        bar2 = tqdm(total=len(extra), desc=f"{'compressortyt(+cat)':<20}",
+                    position=position, unit="prod", leave=True, dynamic_ncols=True)
+        try:
+            for n, url in enumerate(extra, 1):
+                try:
+                    product = self.parse_product(url)
+                except Exception as exc:
+                    logger.debug("[compressortyt] extra parse error %s: %s", url, exc)
+                    failed_urls.add(url)
+                    bar2.update(1)
+                    continue
+                done_urls.add(url)
+                failed_urls.discard(url)
+                bar2.update(1)
+                if n % 100 == 0:
+                    self._save_progress(done_urls, failed_urls)
+                if product is not None:   # None = comparison-matrix page
+                    yield product
+        finally:
+            bar2.close()
             self._save_progress(done_urls, failed_urls)
 
     def _offer_to_product(self, offer: ET.Element, cat_path) -> Product:

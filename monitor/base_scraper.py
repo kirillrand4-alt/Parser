@@ -12,9 +12,32 @@ import requests
 
 try:
     from tqdm.auto import tqdm
-except Exception:  # tqdm optional — degrade to a no-op wrapper
-    def tqdm(iterable=None, **_):  # type: ignore
-        return iterable if iterable is not None else iter(())
+except Exception:  # tqdm optional — degrade to a no-op progress bar
+    class tqdm:  # type: ignore
+        """Stand-in for tqdm when it is not installed.
+
+        It must behave like a BAR, not like an iterator: callers do
+        `bar = tqdm(total=...)` then `bar.update()` / `bar.set_postfix()` /
+        `bar.close()`. Returning a bare iterator here (the previous stub) made
+        every scrape crash with AttributeError on the first update whenever
+        tqdm was missing, since tqdm is only an optional dependency.
+        """
+
+        def __init__(self, iterable=None, **_):
+            self._iterable = iterable
+
+        def __iter__(self):
+            return iter(self._iterable if self._iterable is not None else ())
+
+        def update(self, _n=1): pass
+
+        def set_postfix(self, *_a, **_k): pass
+
+        def close(self): pass
+
+        def __enter__(self): return self
+
+        def __exit__(self, *_): return False
 
 from .http_client import HttpClient
 from .models import Product
