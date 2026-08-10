@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from typing import Optional
 
 from bs4 import BeautifulSoup
@@ -54,59 +55,97 @@ class VpkScraper(BaseScraper):
         return ["__category__"]
 
     def fetch_listing(self, url: str) -> list[str]:
-        # Walk all CATEGORIES sequentially. Progress is saved to the checkpoint
-        # so a resumed run doesn't redo completed pages.
+        """Собрать товарные URL из категорий каталога.
+
+        Битрикс печатает номер последней страницы прямо на первой
+        (`?PAGEN_1=338`), поэтому число страниц известно заранее и они качаются
+        пачками параллельно, а не по одной.
+
+        Так уходят сразу две беды прежнего обхода «по одной до пустой страницы»:
+          * он был медленным — страницы тут по 2.5 МБ, замер на боевом прогоне
+            дал 26 с/страница, то есть часы на категорию;
+          * он ОБРЫВАЛСЯ на первой же странице при RESUME=1. Обход грузил ранее
+            сохранённые URL в `seen`, но шёл опять с первой страницы — все её
+            товары уже были знакомы, срабатывало «нет новых», и категория
+            закрывалась. Сохранённый номер страницы при этом не использовался.
+            На боевом прогоне это давало 5 202 товара вместо ~15 600.
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
         resume = os.getenv("RESUME", "").strip().lower() in ("1", "true", "yes")
-        urls: list[str] = []
-        if resume:
-            saved = self._checkpoint.get("vpk_partial_urls") or []
-            if saved:
-                urls = list(saved)
-                logger.info("[v-p-k] resume: loaded %d URLs from checkpoint", len(urls))
-        seen: set[str] = set(urls)
+        page_timeout = int(os.getenv("VPK_PAGE_TIMEOUT", "30"))
+        # Страницы тяжёлые (2.5 МБ), поэтому потоков меньше, чем у compressortyt.
+        workers = int(os.getenv("VPK_LISTING_WORKERS", "8"))
 
-        page_timeout = int(os.getenv("VPK_PAGE_TIMEOUT", "15"))
-        persist_every = int(os.getenv("VPK_PERSIST_EVERY", "10"))
+        cached = self._checkpoint.get("vpk_catalog_urls") if resume else None
+        if cached:
+            logger.info("[v-p-k] каталог: %d URL из чекпоинта (обход пропущен)",
+                        len(cached))
+            urls = list(cached)
+        else:
+            urls = []
+            seen: set[str] = set()
 
-        for category in CATEGORIES:
-            consecutive_fail = 0
-            for page in range(1, MAX_PAGES + 1):
-                page_url = category if page == 1 else f"{category}?PAGEN_1={page}"
-                try:
-                    resp = self.client.get(page_url, timeout=page_timeout)
-                except Exception as exc:
-                    consecutive_fail += 1
-                    logger.warning("[v-p-k] page %d fetch error (%d in a row): %s",
-                                   page, consecutive_fail, exc)
-                    self._persist_pages(page - 1, urls)
-                    if consecutive_fail >= 3:
-                        logger.error("[v-p-k] %d pages failed in a row — stopping walk "
-                                     "at page %d (resume with RESUME=1)", consecutive_fail, page)
-                        break
-                    continue
-                consecutive_fail = 0
-                soup = BeautifulSoup(resp.content, "lxml")
-                new = 0
+            def products_on(html: bytes) -> list[str]:
+                soup = BeautifulSoup(html, "lxml")
+                out = []
                 for a in soup.select("a[href*='/product/']"):
                     href = (a.get("href") or "").split("?")[0]
-                    if not href:
-                        continue
-                    full = href if href.startswith("http") else BASE + href
+                    if href:
+                        out.append(href if href.startswith("http") else BASE + href)
+                return out
+
+            def add(found: list[str]) -> None:
+                for full in found:
                     if full not in seen:
                         seen.add(full)
                         urls.append(full)
-                        new += 1
-                # Bitrix repeats last page for out-of-range PAGEN → end of category
-                if new == 0:
-                    break
-                if page % persist_every == 0:
-                    logger.info("[v-p-k] %s page %d, %d URLs so far", category, page, len(urls))
-                    self._persist_pages(page, urls)
-            logger.info("[v-p-k] finished %s", category)
 
-        # Walk finished — drop partial-progress keys
-        self._checkpoint.pop("vpk_partial_urls", None)
-        self._checkpoint.pop("vpk_partial_last_page", None)
+            for category in CATEGORIES:
+                try:
+                    first = self.client.get(category, timeout=page_timeout).content
+                except Exception as exc:
+                    logger.error("[v-p-k] %s: первая страница не открылась: %s",
+                                 category, exc)
+                    continue
+                add(products_on(first))
+                pages = [int(n) for n in re.findall(
+                    r"PAGEN_1=(\d+)", first.decode("utf-8", "replace"))]
+                last = min(max(pages), MAX_PAGES) if pages else 0
+                if last <= 1:
+                    logger.warning("[v-p-k] %s: число страниц не найдено, "
+                                   "взята только первая", category)
+                    continue
+                logger.info("[v-p-k] %s: %d страниц, качаю по %d",
+                            category, last, workers)
+
+                def grab(p: int, _c=category) -> tuple[int, list[str]]:
+                    try:
+                        u = f"{_c}?PAGEN_1={p}"
+                        return p, products_on(
+                            self.client.get(u, timeout=page_timeout).content)
+                    except Exception as exc:
+                        logger.warning("[v-p-k] страница %d: %s", p, exc)
+                        return p, []
+
+                done = 0
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    # без sorted(): pool.map и так держит порядок аргументов, а
+                    # sorted дождался бы всех страниц и убил отметки прогресса
+                    for _p, found in pool.map(grab, range(2, last + 1)):
+                        add(found)
+                        done += 1
+                        if done % 25 == 0:
+                            logger.info("[v-p-k] обход: %d/%d страниц, %d товаров",
+                                        done, last - 1, len(urls))
+                logger.info("[v-p-k] finished %s — %d URL", category, len(urls))
+
+            self._checkpoint["vpk_catalog_urls"] = urls
+            # ключи частичного обхода больше не нужны: список либо собран
+            # целиком, либо будет собран заново на следующем прогоне
+            self._checkpoint.pop("vpk_partial_urls", None)
+            self._checkpoint.pop("vpk_partial_last_page", None)
+            self._save_ckpt()
         if os.getenv("SHUFFLE", "").strip() in ("1", "true", "yes"):
             import random
             random.shuffle(urls)
@@ -115,10 +154,8 @@ class VpkScraper(BaseScraper):
         logger.info("[v-p-k] %d product URLs from catalog pagination", len(urls))
         return urls
 
-    def _persist_pages(self, page: int, urls: list[str]) -> None:
-        """Atomically save mid-walk pagination progress to the checkpoint."""
-        self._checkpoint["vpk_partial_urls"] = urls
-        self._checkpoint["vpk_partial_last_page"] = page
+    def _save_ckpt(self) -> None:
+        """Атомарно сохранить чекпоинт (через .tmp + rename)."""
         self._checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._checkpoint_path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(self._checkpoint, ensure_ascii=False))
