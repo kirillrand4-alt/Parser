@@ -18,6 +18,7 @@ import io
 import json
 import os
 import queue
+import re
 import secrets
 import subprocess
 import sys
@@ -1200,14 +1201,25 @@ def start():
         _log_lines = []
         _log_done = False
 
+        # Без PYTHONIOENCODING дочерний питон пишет в трубу в кодировке системы
+        # (на русской Windows — cp1251), а мы читаем как UTF-8: русские строки
+        # лога приезжают кашей вида «В[А». Договариваемся об одной кодировке явно
+        # с обеих сторон; errors="replace" — чтобы одна битая строка не роняла
+        # чтение всего лога.
+        env["PYTHONIOENCODING"] = "utf-8"
         _proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             bufsize=1,
             env=env,
             cwd=str(Path(__file__).parent),
+            # POSIX: своя группа процессов, чтобы Стоп мог погасить всё дерево
+            # (на Windows дерево гасится через taskkill /T, см. _terminate_tree).
+            start_new_session=(os.name != "nt"),
         )
         # Drain stdout into the buffer in a background thread
         threading.Thread(target=_drain, args=(_proc,), daemon=True).start()
@@ -1215,12 +1227,45 @@ def start():
     return jsonify({"ok": True})
 
 
+# tqdm рисует прогресс управляющими последовательностями (\x1b[A — «курсор
+# вверх»). В терминале это перерисовка строки, а в HTML-логе браузера ESC
+# невидим и остаётся мусор «[A[A[A» в конце каждой строки. Вырезаем.
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07")
+
+
+def _clean_log_line(line: str) -> str:
+    # \r возвращает каретку в начало — оставляем только последнюю перерисовку
+    line = line.replace("\r\n", "\n").split("\r")[-1]
+    return _ANSI_RE.sub("", line).rstrip()
+
+
 def _drain(proc: subprocess.Popen) -> None:
     global _log_done
     for line in proc.stdout:
-        _log_lines.append(line.rstrip())
+        _log_lines.append(_clean_log_line(line))
     proc.wait()
     _log_done = True
+
+
+def _terminate_tree(proc: subprocess.Popen) -> None:
+    """Kill the scraper AND anything it spawned.
+
+    On Windows a venv's Scripts\\python.exe is a launcher stub: it starts the
+    real interpreter as a CHILD process (visible as a parent/child pair with the
+    same command line). proc.terminate() kills only the stub, so the scraper
+    keeps running orphaned and the Stop button appears to do nothing — the log
+    goes on scrolling. taskkill /T walks the tree; on POSIX we signal the
+    process group created via start_new_session.
+    """
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                       capture_output=True)
+    else:
+        import signal
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except Exception:
+            proc.terminate()
 
 
 @app.route("/stop", methods=["POST"])
@@ -1229,7 +1274,7 @@ def stop():
     global _proc
     with _proc_lock:
         if _proc and _proc.poll() is None:
-            _proc.terminate()
+            _terminate_tree(_proc)
     return jsonify({"ok": True})
 
 

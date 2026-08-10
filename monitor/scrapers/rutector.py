@@ -38,6 +38,14 @@ MAX_URLS = int(os.getenv("RUTECTOR_MAX", "0")) or None
 SLUG_KEYWORDS = (
     "kompressor", "vintov", "porshnev", "pnevmo",
     "resiver", "ressiver", "osushitel", "vozduh",
+    # Генераторы азота: у матчера под них отдельный отчёт (Azot_spec_review),
+    # а слово «компрессор» в слаге не встречается. Замер 10.08: ключ добавляет
+    # 76 URL, и все 76 — generator-azota-…-ats-ngo-* (бренд ATS есть в
+    # BRAND_ALIASES). Мусора не тянет.
+    "azot",
+    # Проверено и НЕ добавлено (замер 10.08): «vozdushn» +227 — это фильтры,
+    # рукава и сварочные горелки; «buster» +169 — бустерные станции на насосах
+    # Calpeda 2MXH/2НМ, то есть водоснабжение, а не компрессорный дожим.
 )
 
 _BRAND_KEYS = ("Бренд", "Производитель", "Марка", "Торговая марка")
