@@ -143,35 +143,61 @@ class CompressortytScraper(BaseScraper):
 
         errors = 0
         i = 0
+        # Обогащение — это ОТДЕЛЬНЫЙ HTTP-запрос на каждый товар, и раньше он шёл
+        # строго по одному: base_scraper распараллеливает разбор товаров, но этот
+        # scrape() его переопределяет и про WORKERS не знал. На боевом прогоне это
+        # давало 10.5 с/товар против 1.7 товара/с у rutector — разница в 18 раз и
+        # 46 часов на сайт. Берём то же число потоков, что и база.
+        key = self.site.replace(".", "_").replace("-", "_").upper()
+        workers = max(1, int(os.getenv(f"WORKERS__{key}") or os.getenv("WORKERS") or "1"))
+
+        def build(offer):
+            """Собрать товар из оффера и, если надо, дотянуть характеристики.
+
+            Ошибку возвращаем как None, а не пробрасываем: pool.map отдаёт
+            исключение при извлечении результата, и один битый оффер уронил бы
+            весь цикл — раньше он просто считался ошибкой и пропускался.
+            """
+            try:
+                product = self._offer_to_product(offer, cat_path)
+            except Exception as exc:
+                logger.debug("[compressortyt] offer error: %s", exc)
+                return None
+            if ENRICH_SPECS and product.product_url:
+                try:
+                    self._enrich(product)
+                except Exception as exc:
+                    logger.debug("[compressortyt] enrich error %s: %s",
+                                 product.product_url, exc)
+            return product
+
         bar = tqdm(total=len(pending), desc=f"{'compressortyt.ru':<20}", position=position,
                    unit="prod", leave=True, dynamic_ncols=True)
         try:
-            for offer in pending:
-                url = offer_url(offer)
-                try:
-                    product = self._offer_to_product(offer, cat_path)
-                except Exception as exc:
-                    logger.debug("[compressortyt] offer error: %s", exc)
-                    errors += 1
+            if workers > 1:
+                logger.info("[compressortyt] обогащение в %d потоков", workers)
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                # pool.map держит порядок офферов и отдаёт по мере готовности,
+                # поэтому чекпоинт и прогресс-бар обновляются как раньше
+                for offer, product in zip(pending, pool.map(build, pending)):
+                    url = offer_url(offer)
+                    if product is None:
+                        errors += 1
+                        if url:
+                            failed_urls.add(url)
+                        bar.update(1)
+                        bar.set_postfix(err=errors, refresh=False)
+                        continue
                     if url:
-                        failed_urls.add(url)
+                        done_urls.add(url)
+                        failed_urls.discard(url)
                     bar.update(1)
                     bar.set_postfix(err=errors, refresh=False)
-                    continue
-                if ENRICH_SPECS and product.product_url:
-                    try:
-                        self._enrich(product)
-                    except Exception as exc:
-                        logger.debug("[compressortyt] enrich error %s: %s", product.product_url, exc)
-                if url:
-                    done_urls.add(url)
-                    failed_urls.discard(url)
-                bar.update(1)
-                bar.set_postfix(err=errors, refresh=False)
-                i += 1
-                if i % 100 == 0:
-                    self._save_progress(done_urls, failed_urls)
-                yield product
+                    i += 1
+                    if i % 100 == 0:
+                        self._save_progress(done_urls, failed_urls)
+                    yield product
         finally:
             bar.close()
             self._save_progress(done_urls, failed_urls)
@@ -218,22 +244,30 @@ class CompressortytScraper(BaseScraper):
                     len(extra))
         bar2 = tqdm(total=len(extra), desc=f"{'compressortyt(+cat)':<20}",
                     position=position, unit="prod", leave=True, dynamic_ncols=True)
+        def parse_one(u):
+            # как и в build(): ошибку возвращаем, а не пробрасываем, иначе один
+            # битый URL уронит весь добор
+            try:
+                return self.parse_product(u)
+            except Exception as exc:
+                logger.debug("[compressortyt] extra parse error %s: %s", u, exc)
+                return None
+
         try:
-            for n, url in enumerate(extra, 1):
-                try:
-                    product = self.parse_product(url)
-                except Exception as exc:
-                    logger.debug("[compressortyt] extra parse error %s: %s", url, exc)
-                    failed_urls.add(url)
+            n = 0
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                for url, product in zip(extra, pool.map(parse_one, extra)):
+                    n += 1
+                    if product is None:
+                        failed_urls.add(url)
+                        bar2.update(1)
+                        continue
+                    done_urls.add(url)
+                    failed_urls.discard(url)
                     bar2.update(1)
-                    continue
-                done_urls.add(url)
-                failed_urls.discard(url)
-                bar2.update(1)
-                if n % 100 == 0:
-                    self._save_progress(done_urls, failed_urls)
-                if product is not None:   # None = comparison-matrix page
-                    yield product
+                    if n % 100 == 0:
+                        self._save_progress(done_urls, failed_urls)
+                    yield product   # None-страницы (матрицы сравнения) отсеяны выше
         finally:
             bar2.close()
             self._save_progress(done_urls, failed_urls)
