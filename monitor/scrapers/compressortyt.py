@@ -302,6 +302,12 @@ class CompressortytScraper(BaseScraper):
                     found_on_page += 1
 
             logger.debug("[compressortyt] %s → %d products", paged_url, found_on_page)
+            # Обход каталога — это ~600 страниц, минут пятнадцать через прокси, и
+            # всё это время сайт не показывает ни одного товара. Без отметки
+            # прогресса это выглядит как зависший парсер (ровно так и выглядело).
+            if page % 50 == 0:
+                logger.info("[compressortyt] обход каталога: страница %d, "
+                            "%d товаров найдено", page, len(product_urls))
             if found_on_page == 0:
                 empty_streak += 1
                 if empty_streak >= 2:  # tolerate one odd page, stop on two
