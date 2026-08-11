@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -109,18 +110,22 @@ class BaseScraper(ABC):
         prices each time); the HTTP cache — not the checkpoint — protects the
         site from repeated load.
 
-        Progress is tracked in a per-site checkpoint (``done_urls`` /
-        ``failed_urls``). With ``RESUME=1`` set, URLs already in ``done_urls``
-        are skipped, so a run interrupted by blocking (or one re-launched once
-        proxies are configured) picks up exactly where it left off and retries
-        the URLs that failed.
+        Progress is tracked in a per-site checkpoint (``done_urls`` / ``done_at``
+        / ``failed_urls``). С ``RESUME=1`` пропускаются не все собранные когда-то
+        URL, а только собранные НЕДАВНО — моложе ``FRESH_WITHIN_DAYS`` (по
+        умолчанию 2 дня, см. ``_recent_done``). Прогон, оборванный на середине,
+        продолжается с места обрыва, а карточки, снятые неделю назад, идут
+        заново — иначе их цены застывают навсегда. Неудачные URL повторяются.
 
         A live tqdm progress bar shows parsed / errors / blocked counts.
         ``position`` lets concurrent site bars stack without overwriting.
         """
         resume = os.getenv("RESUME", "").strip().lower() in ("1", "true", "yes")
-        done_urls: set[str] = set(self._checkpoint.get("done_urls", [])) if resume else set()
+        done_urls: set[str] = self._recent_done() if resume else set()
         failed_urls: set[str] = set(self._checkpoint.get("failed_urls", [])) if resume else set()
+        # Что уже было собрано ДО этого прогона — чтобы при сохранении не
+        # обновлять их отметки времени: они собраны не сейчас.
+        self._initial_done = set(done_urls)
 
         # 1) Build the full work list first so the bar has a real total.
         # For scrapers that do expensive discovery (e.g. paginated catalog walk),
@@ -160,6 +165,10 @@ class BaseScraper(ABC):
                     logger.info("[%s] seeded %d done URLs from prior CSV output",
                                 self.site, len(seed_done))
                     done_urls |= seed_done
+                    # Их собрали КОГДА-ТО (по старым CSV), а не сейчас — иначе
+                    # при сохранении они получат сегодняшнюю отметку и навсегда
+                    # будут считаться свежими.
+                    self._initial_done |= seed_done
                     self._checkpoint["csv_seeded"] = True
                     self._save_progress(done_urls, failed_urls)
             else:
@@ -334,6 +343,35 @@ class BaseScraper(ABC):
         self._checkpoint["done_urls"] = list(done_urls)
         self._checkpoint_path.write_text(json.dumps(self._checkpoint))
 
+    def _recent_done(self) -> set[str]:
+        """URL, собранные достаточно НЕДАВНО, чтобы их можно было пропустить.
+
+        Прежде «продолжить» пропускал всё, что собиралось когда-либо, и цены на
+        этих карточках навсегда оставались июльскими. А «с нуля» перебирал даже
+        то, что снято десять минут назад, — после любого обрыва приходилось
+        начинать сначала.
+
+        Теперь чекпоинт помнит время сбора каждой ссылки (`done_at`), и
+        пропускаются только те, что моложе FRESH_WITHIN_DAYS (по умолчанию 2
+        дня). Всё, что старше, перезапрашивается — цена обновится.
+
+        У ссылок из старых чекпоинтов отметки времени нет: возраст неизвестен,
+        поэтому считаем их устаревшими и собираем заново. Это ровно то
+        поведение, которое нужно для июльских данных.
+        FRESH_WITHIN_DAYS=0 возвращает прежнюю логику «пропускать всё собранное».
+        """
+        days = float(os.getenv("FRESH_WITHIN_DAYS", "2") or 0)
+        done_at: dict = self._checkpoint.get("done_at", {}) or {}
+        if days <= 0:
+            return set(self._checkpoint.get("done_urls", []))
+        cutoff = time.time() - days * 86400
+        recent = {u for u, t in done_at.items() if isinstance(t, (int, float)) and t >= cutoff}
+        stale = len(self._checkpoint.get("done_urls", [])) - len(recent)
+        if stale > 0:
+            logger.info("[%s] пропускаю %d свежих (моложе %g дн.), "
+                        "%d устаревших пойдут заново", self.site, len(recent), days, stale)
+        return recent
+
     def _save_progress(self, done_urls: set[str], failed_urls: set[str]) -> None:
         """Persist resume index: successfully parsed and failed URLs.
 
@@ -344,14 +382,24 @@ class BaseScraper(ABC):
         concurrent writer (or a checkpoint loaded before an updated one was
         uploaded) can never shrink the recorded progress.
         """
-        on_disk = set()
+        on_disk: set[str] = set()
+        done_at: dict = {}
         if self._checkpoint_path.exists():
             try:
-                on_disk = set(json.loads(
-                    self._checkpoint_path.read_text()).get("done_urls", []))
+                prev = json.loads(self._checkpoint_path.read_text())
+                on_disk = set(prev.get("done_urls", []))
+                done_at = prev.get("done_at", {}) or {}
             except Exception:
                 pass
         merged_done = set(done_urls) | on_disk
+        # Отметку времени ставим ТОЛЬКО тем, что собрано в этом прогоне.
+        # Пропущенные при возобновлении лежат в done_urls тоже, и без этой
+        # проверки их «свежесть» продлевалась бы бесконечно: карточка,
+        # собранная в июле, каждый прогон выглядела бы вчерашней.
+        now = time.time()
+        for u in set(done_urls) - getattr(self, "_initial_done", set()):
+            done_at[u] = now
+        self._checkpoint["done_at"] = done_at
         self._checkpoint["done_urls"] = sorted(merged_done)
         self._checkpoint["failed_urls"] = sorted(failed_urls)
         self._checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
