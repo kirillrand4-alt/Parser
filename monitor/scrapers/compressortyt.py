@@ -299,7 +299,16 @@ class CompressortytScraper(BaseScraper):
         )
 
     def _enrich(self, product: Product) -> None:
-        """Fetch product page and fill specs + refine status."""
+        """Fetch product page and fill specs + refine status AND price.
+
+        Цену тоже перепроверяем по странице, и вот почему. В YML-фиде цена может
+        жить и тогда, когда карточка давно перешла в «Цена по запросу»: Berg
+        ВК-7.5 на 7/8/10/12 бар отдавались из фида по 182 657 у всех четырёх
+        (одинаковая цена при разном давлении — уже признак), а на странице стоит
+        «Цена по запросу» и кнопка «Запросить КП», числа 182 657 в HTML нет вовсе.
+        Для pnevmo-sklad это правило уже действует («видимый блок сказал по
+        запросу — значит число из DOM устаревшее»), здесь его не хватало.
+        """
         resp = self.client.get(product.product_url)
         soup = BeautifulSoup(resp.content, "lxml")
         product.specs = self._extract_specs(soup)
@@ -307,6 +316,29 @@ class CompressortytScraper(BaseScraper):
         status = detect_series_status(page_text)
         if status != "неизвестно":
             product.series_status = status
+        if self._price_on_request(soup):
+            product.price = None
+            product.old_price = None
+            product.discount_pct = None
+            product.price_on_request = True
+            product.availability = "цена по запросу"
+
+    @staticmethod
+    def _price_on_request(soup: BeautifulSoup) -> bool:
+        """Страница показывает «Цена по запросу» вместо числа.
+
+        Опираемся на выделенный элемент блока оплаты САМОГО товара:
+
+            <section class="product-card__payment">
+              <div class="product-card__priceBlock">
+                <div class="product-card__price-by-request">Цена по запросу</div>
+
+        По тексту судить нельзя: фраза встречается и в плитках «похожие товары»,
+        а класс .product__price там же отдаёт чужие числа («Цена 183 633 руб.»),
+        из-за чего проверка по тексту давала ложное «цена есть»."""
+        return soup.select_one(
+            ".product-card__payment .product-card__price-by-request,"
+            ".product-card__priceBlock .product-card__price-by-request") is not None
 
     def fetch_listing(self, url: str) -> list[str]:
         """Collect all product URLs from a category, following pagination.

@@ -165,6 +165,13 @@ class PnevmoSkladScraper(BaseScraper):
         series_status = status_from_availability(availability)
         if has_discontinued_signal(page_text):
             series_status = "снято"
+            # И само поле «наличие» тоже переписываем. Проверено 11.08 на 18
+            # карточках по живым страницам: у снятых позиций собственного статуса
+            # наличия НЕТ — под заголовком стоит «Снято с производства», вместо
+            # цены «Цена по запросу», кнопки покупки нет. А «В наличии» селектор
+            # подхватывал из плиток «Похожие товары» и «С этим товаром покупают».
+            # Из-за этого 2 010 снятых карточек уезжали в выгрузку как «В наличии».
+            availability = "снято с производства"
 
         category_path = self._breadcrumb(soup)
         image_url = self._get_image(soup)
