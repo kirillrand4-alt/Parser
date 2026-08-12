@@ -147,14 +147,18 @@ class AerocompressorsScraper(BaseScraper):
     # ------------------------------------------------------------------
 
     def _price(self, soup: BeautifulSoup) -> float | None:
-        el = soup.select_one("[itemprop='price']")
-        if el:
+        # Цена товара живёт в карточке div.object (span.price + meta itemprop=price);
+        # карусель «Похожие товары» (div.block-specials#similar) несёт .price ЧУЖИХ
+        # товаров, и на карточках «Поставки приостановлены» это единственные цены на
+        # странице — глобальный select_one снимал первую из них. Итог в данных: 560
+        # карточек с тиражной чужой ценой (411 564 — 232 шт, 1 300 — 162, 697 716 — 114,
+        # 891 180 — 52), все с ложным «в наличии». Найдено агентской проверкой 12.08.
+        for el in soup.select("[itemprop='price'], .price"):
+            if el.find_parent(class_="block-specials") or el.find_parent(id="similar"):
+                continue
             p = clean_price(el.get("content") or el.get_text())
             if p:
                 return p
-        el = soup.select_one(".price")
-        if el:
-            return clean_price(el.get_text())
         return None
 
     def _old_price(self, soup: BeautifulSoup) -> float | None:
