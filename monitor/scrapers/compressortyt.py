@@ -452,7 +452,16 @@ class CompressortytScraper(BaseScraper):
         model = self._extract_model(soup, name, url)
 
         # --- Price ---
-        price = self._extract_price(soup, "price", "current-price", "product__price")
+        # «Цена по запросу» проверяется ДО извлечения: на таких страницах свой блок цены
+        # пуст, а единственные itemprop=price принадлежат карусели «похожих товаров» —
+        # глобальный селектор снимал цену чужой (и ротируемой при перезагрузке!) карточки.
+        # В enrich-пути (фид) эта проверка была с 043e9b2, в HTML/добор-пути — нет, и
+        # прогон 12.08 снова принёс чужие цены: VEGA 90-14 получила 1 280 135 от соседа
+        # при живой «Цене по запросу» (подтверждено агентами по data-href на 12 страницах).
+        if self._price_on_request(soup):
+            price = None
+        else:
+            price = self._extract_price(soup, "price", "current-price", "product__price")
         # The strike-through old price lives in .product-card__price_sale; no
         # itemprop fallback here, or the old price would echo the current one.
         old_price = self._extract_price(
